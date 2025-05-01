@@ -1,6 +1,8 @@
 use anyhow::{anyhow, Result};
+use strum_macros::EnumString;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, EnumString)]
+#[strum(ascii_case_insensitive)]
 pub enum Kind {
     Static,
     Field,
@@ -27,10 +29,8 @@ impl SymbolTable {
         }
     }
 
-    pub fn reset() -> Self {
-        Self {
-            entries: Vec::new(),
-        }
+    pub fn reset(&mut self) {
+        self.entries = Vec::new();
     }
 
     pub fn define(&mut self, name: &str, r#type: &str, kind: Kind) {
@@ -42,7 +42,7 @@ impl SymbolTable {
         });
     }
 
-    pub fn var_count(&self, kind: Kind) -> u16 {
+    fn var_count(&self, kind: Kind) -> u16 {
         self.entries
             .iter()
             .filter(|entrie| entrie.kind == kind)
@@ -50,37 +50,25 @@ impl SymbolTable {
             .try_into()
             .unwrap()
     }
-    
-    pub fn kind_of(&self,name:&str) -> Option<Kind>{
-        match self.entries
-        .iter()
-        .find(|entrie| {
-            entrie.name == name
-        }) {
+
+    pub fn kind_of(&self, name: &str) -> Option<Kind> {
+        match self.entries.iter().find(|entrie| entrie.name == name) {
             Some(entrie) => Some(entrie.kind),
-            None => None
+            None => None,
         }
     }
-    
+
     pub fn type_of(&self, name: &str) -> Result<String> {
-        match self.entries
-        .iter()
-        .find(|entrie| {
-            entrie.name == name
-        }) {
+        match self.entries.iter().find(|entrie| entrie.name == name) {
             Some(entrie) => Ok(entrie.r#type.to_string()),
-            None => Err(anyhow!("not found entrie name: {}",name))
+            None => Err(anyhow!("not found entrie name: {}", name)),
         }
     }
 
     pub fn index_of(&self, name: &str) -> Result<u16> {
-        match self.entries
-        .iter()
-        .find(|entrie| {
-            entrie.name == name
-        }) {
+        match self.entries.iter().find(|entrie| entrie.name == name) {
             Some(entrie) => Ok(entrie.index),
-            None => Err(anyhow!("not found entrie name: {}",name))
+            None => Err(anyhow!("not found entrie name: {}", name)),
         }
     }
 }
@@ -144,14 +132,8 @@ mod tests {
         symbol_table.define("b", "int", Kind::Field);
         symbol_table.define("a", "int", Kind::Arg);
 
-        assert_eq!(
-            symbol_table.kind_of("a"),
-            Some(Kind::Var)
-        );
-        assert_eq!(
-            symbol_table.kind_of("b"),
-            Some(Kind::Field)
-        );
+        assert_eq!(symbol_table.kind_of("a"), Some(Kind::Var));
+        assert_eq!(symbol_table.kind_of("b"), Some(Kind::Field));
         Ok(())
     }
 
@@ -163,14 +145,8 @@ mod tests {
         symbol_table.define("b", "char", Kind::Field);
         symbol_table.define("a", "int", Kind::Arg);
 
-        assert_eq!(
-            symbol_table.type_of("a")?,
-            "int".to_string()
-        );
-        assert_eq!(
-            symbol_table.type_of("b")?,
-            "char".to_string()
-        );
+        assert_eq!(symbol_table.type_of("a")?, "int".to_string());
+        assert_eq!(symbol_table.type_of("b")?, "char".to_string());
         assert_eq!(
             symbol_table.type_of("miu").unwrap_err().to_string(),
             "not found entrie name: miu".to_string()
@@ -186,14 +162,8 @@ mod tests {
         symbol_table.define("b", "char", Kind::Field);
         symbol_table.define("a", "int", Kind::Arg);
 
-        assert_eq!(
-            symbol_table.index_of("a")?,
-            0
-        );
-        assert_eq!(
-            symbol_table.index_of("b")?,
-            0
-        );
+        assert_eq!(symbol_table.index_of("a")?, 0);
+        assert_eq!(symbol_table.index_of("b")?, 0);
         assert_eq!(
             symbol_table.index_of("miu").unwrap_err().to_string(),
             "not found entrie name: miu".to_string()

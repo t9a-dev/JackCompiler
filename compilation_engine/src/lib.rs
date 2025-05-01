@@ -2,17 +2,48 @@ use anyhow::{anyhow, Ok, Result};
 use jack_tokenizer::{JackTokenizer, KeyWord, TokenType};
 use std::{
     io::Write,
+    str::FromStr,
     sync::{Arc, Mutex},
 };
+use strum_macros::AsRefStr;
+use symbol_table::{Kind, SymbolTable};
+
+#[derive(Debug, AsRefStr)]
+pub enum Category {
+    Field,
+    Static,
+    Var,
+    Arg,
+    Class,
+    Subroutine,
+}
+
+#[derive(Debug, AsRefStr)]
+pub enum Usage {
+    Declare,
+    Use,
+}
 
 pub struct CompilationEngine {
     tokenizer: JackTokenizer,
     writer: Arc<Mutex<dyn Write>>,
+    class_symbol_table: SymbolTable,
+    subroutine_symbol_table: SymbolTable,
 }
 
 impl CompilationEngine {
-    pub fn new(tokenizer: JackTokenizer, writer: Arc<Mutex<dyn Write>>) -> Result<Self> {
-        Ok(Self { tokenizer, writer })
+    pub fn new(
+        tokenizer: JackTokenizer,
+        writer: Arc<Mutex<dyn Write>>,
+        class_symbol_table: SymbolTable,
+        subroutine_symbol_table: SymbolTable,
+    ) -> Result<Self> {
+        Ok(Self {
+            tokenizer,
+            writer,
+            class_symbol_table,
+            subroutine_symbol_table,
+        })
     }
 
     pub fn compile_class(&mut self) -> Result<()> {
@@ -45,15 +76,17 @@ impl CompilationEngine {
             let tag_name = "classVarDec";
             self.write_start_xml_tag(tag_name)?;
 
-            self.process_token("static").or_else(|_| {
-                self.process_token("field")?;
-                Ok(())
-            })?;
+            let symbol_entrie_kind = self
+                .process_token("static")
+                .or_else(|_| Ok(self.process_token("field")?))?;
             // type -> "int"|"char"|"boolean"|className
-            {
-                self.process_type()?;
-            }
-            self.process_identifier()?;
+            let symbol_entrie_type = self.process_type()?;
+            let symbol_entrie_name = self.process_identifier()?;
+            self.class_symbol_table.define(
+                &symbol_entrie_name,
+                &symbol_entrie_type,
+                Kind::from_str(&symbol_entrie_kind)?,
+            );
             // 次のトークンを先読みして","であれば複数varNameが存在するので対応する
             while self.tokenizer.token_type()? == TokenType::Symbol
                 && self.tokenizer.symbol()? == ","
@@ -93,20 +126,24 @@ impl CompilationEngine {
             let tag_name = "subroutineDec";
             self.write_start_xml_tag(tag_name)?;
 
-            self.process_token("constructor").or_else(|_| {
-                self.process_token("function").or_else(|_| {
-                    self.process_token("method")?;
-                    Ok(())
-                })
-            })?;
+            let is_method  = self.process_token("constructor").or_else(|_| {
+                self.process_token("function")
+                    .or_else(|_| Ok(self.process_token("method")?))
+            })? == "method";
             // "void"|type
-            {
-                self.process_token("void").or_else(|_| {
-                    self.process_type()?;
-                    Ok(())
-                })?;
+            self
+                .process_token("void")
+                .or_else(|_| Ok(self.process_type()?))?;
+            let symbol_entrie_name = self.process_identifier()?;
+            self.subroutine_symbol_table.reset(); //　仕様によりサブルーチンコンパイル開始時に初期化する
+            // 仕様によりメソッドの場合はthisをシンボルテーブルに追加する
+            if is_method {
+                self.subroutine_symbol_table.define(
+                    "this",
+                    &symbol_entrie_name,
+                    Kind::Arg,
+                );
             }
-            self.process_identifier()?;
             self.process_token("(")?;
             self.compile_parameter_list()?;
             self.process_token(")")?;
@@ -138,15 +175,19 @@ impl CompilationEngine {
             self.tokenizer.keyword()?.as_ref().to_lowercase().as_str(),
             "int" | "char" | "boolean"
         ) {
-            self.process_type()?;
-            self.process_identifier()?;
+            let symbol_entrie_kind = Kind::Arg; // サブルーチンのパラメータリストコンパイルなのでArg固定
+            let symbol_entrie_type = self.process_type()?;
+            let symbol_entrie_name =self.process_identifier()?;
+            self.subroutine_symbol_table.define(&symbol_entrie_name, &symbol_entrie_type, symbol_entrie_kind);
+
             // 次のトークンを先読みして","であれば複数varNameが存在するので対応する
             while self.tokenizer.token_type()? == TokenType::Symbol
                 && self.tokenizer.symbol()? == ","
             {
                 self.process_token(",")?;
-                self.process_type()?;
-                self.process_identifier()?;
+                let symbol_entrie_type = self.process_type()?;
+                let symbol_entrie_name = self.process_identifier()?;
+                self.subroutine_symbol_table.define(&symbol_entrie_name, &symbol_entrie_type, symbol_entrie_kind);
             }
         }
 
@@ -175,13 +216,16 @@ impl CompilationEngine {
         let tag_name = "varDec";
         self.write_start_xml_tag(tag_name)?;
 
+        let symbol_entrie_kind = Kind::Var; // サブルーチンボディのコンパイルなのでVar固定
         self.process_token("var")?;
-        self.process_type()?;
-        self.process_identifier()?;
+        let symbol_entrie_type =  self.process_type()?;
+        let symbol_entrie_name = self.process_identifier()?;
+        self.subroutine_symbol_table.define(&symbol_entrie_name, &symbol_entrie_type, symbol_entrie_kind);
         // 次のトークンを先読みして","であれば複数varNameが存在するので対応する
         while self.tokenizer.token_type()? == TokenType::Symbol && self.tokenizer.symbol()? == "," {
             self.process_token(",")?;
-            self.process_identifier()?;
+            let symbol_entrie_name = self.process_identifier()?;
+            self.subroutine_symbol_table.define(&symbol_entrie_name, &symbol_entrie_type, symbol_entrie_kind);
         }
         self.process_token(";")?;
 
@@ -210,6 +254,7 @@ impl CompilationEngine {
             }
         }
         self.write_end_xml_tag(tag_name)?;
+        todo!();
         Ok(())
     }
 
@@ -406,7 +451,7 @@ impl CompilationEngine {
         Ok(())
     }
 
-    fn process_token(&mut self, token: &str) -> Result<()> {
+    fn process_token(&mut self, token: &str) -> Result<String> {
         let current_token = match self.tokenizer.token_type()? {
             jack_tokenizer::TokenType::KeyWord => self
                 .tokenizer
@@ -449,11 +494,12 @@ impl CompilationEngine {
         }
 
         self.tokenizer.advance()?;
-        Ok(())
+        Ok(current_token.to_string())
     }
 
-    fn process_identifier(&mut self) -> Result<()> {
+    fn process_identifier(&mut self) -> Result<String> {
         if self.tokenizer.token_type()? == TokenType::Identifier {
+            let identifier = &self.tokenizer.identifer()?;
             self.write_xml(
                 &self
                     .tokenizer
@@ -461,29 +507,25 @@ impl CompilationEngine {
                     .as_ref()
                     .to_string()
                     .to_lowercase(),
-                &self.tokenizer.identifer()?,
+                &identifier,
             )?;
+            self.tokenizer.advance()?;
+            Ok(identifier.to_string())
         } else {
             return Err(anyhow!(
                 "syntax error current token type is not identifier: {:?}",
                 self.tokenizer.token_type()?
             ));
         }
-        self.tokenizer.advance()?;
-
-        Ok(())
     }
 
-    fn process_type(&mut self) -> Result<()> {
-        self.process_token("int").or_else(|_| {
+    fn process_type(&mut self) -> Result<String> {
+        Ok(self.process_token("int").or_else(|_| {
             self.process_token("char").or_else(|_| {
-                self.process_token("boolean").or_else(|_| {
-                    self.process_identifier()?;
-                    Ok(())
-                })
+                self.process_token("boolean")
+                    .or_else(|_| Ok(self.process_identifier()?))
             })
-        })?;
-        Ok(())
+        })?)
     }
 
     fn has_expression(&self) -> Result<bool> {
@@ -526,6 +568,25 @@ impl CompilationEngine {
         Ok(())
     }
 
+    fn write_identifier_xml(
+        &mut self,
+        name: &str,
+        category: Category,
+        index: u16,
+        usage: Usage,
+        tag_name: &str,
+    ) -> Result<()> {
+        let category = category.as_ref().to_string();
+        let index = index.to_string();
+        let usage = usage.as_ref().to_string();
+        self.write(&format!(
+            r#"<{tag_name} name="{name}" category="{category}" index={index} usage={usage} >"#
+        ))?;
+        self.write(&format!(" {name} "))?;
+        self.write(&format!("</{tag_name}>\n"))?;
+        Ok(())
+    }
+
     fn write(&mut self, content: &str) -> Result<()> {
         self.writer.lock().unwrap().write(content.as_bytes())?;
         self.writer.lock().unwrap().flush()?;
@@ -540,6 +601,7 @@ mod tests {
         io::Cursor,
         sync::{Arc, Mutex},
     };
+    use symbol_table::SymbolTable;
 
     use jack_tokenizer::JackTokenizer;
 
@@ -551,8 +613,15 @@ mod tests {
         let jack_code = Cursor::new("method");
         let output = Arc::new(Mutex::new(Cursor::new(Vec::new())));
         let mut tokenizer = JackTokenizer::new(jack_code)?;
+        let class_symbol_table = SymbolTable::new();
+        let subroutine_symbol_table = SymbolTable::new();
         tokenizer.advance()?;
-        let mut compilation_engine = CompilationEngine::new(tokenizer, output.clone())?;
+        let mut compilation_engine = CompilationEngine::new(
+            tokenizer,
+            output.clone(),
+            class_symbol_table,
+            subroutine_symbol_table,
+        )?;
         compilation_engine.process_token("method")?;
         let expect = "<keyword> method </keyword>\n";
         let output = output.lock().unwrap();

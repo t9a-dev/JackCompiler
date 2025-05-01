@@ -7,7 +7,10 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+strum.workspace = true
+strum_macros.workspace = true
 jack_tokenizer.workspace = true
+symbol_table.workspace = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true
