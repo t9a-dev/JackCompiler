@@ -1,0 +1,39 @@
+[package]
+name = "jack_compiler"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+members = ["jack_tokenizer","compilation_engine", "symbol_table", "vm_writer"]
+
+[workspace.package]
+edition = "2021"
+publish = false
+license = "MIT"
+
+[workspace.dependencies]
+jack_tokenizer = {path = "./jack_tokenizer"}
+compilation_engine = {path = "./compilation_engine"}
+symbol_table = {path ="./symbol_table"}
+vm_writer = {path ="./vm_writer"}
+anyhow = "1.0.97"
+rand = "0.9.0"
+strum = "0.27.1"
+strum_macros = "0.27.1"
+pretty_assertions = "1.4.1"
+regex = "1.11.1"
+
+[dependencies]
+jack_tokenizer.workspace = true
+compilation_engine.workspace = true
+symbol_table.workspace = true
+vm_writer.workspace = true
+anyhow.workspace = true
+strum.workspace = true
+strum_macros.workspace = true
+regex.workspace = true
+
+[dev-dependencies]
+rand.workspace = true
+pretty_assertions.workspace = true
+walkdir = "2.5.0"

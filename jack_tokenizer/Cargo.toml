@@ -1,0 +1,12 @@
+[package]
+name = "jack_tokenizer"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+strum.workspace = true
+strum_macros.workspace = true
+regex.workspace = true
