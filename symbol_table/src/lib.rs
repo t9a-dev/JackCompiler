@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
-use strum_macros::EnumString;
+use strum_macros::{AsRefStr, EnumString};
 
-#[derive(Debug, Clone, Copy, PartialEq, EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, EnumString, AsRefStr)]
 #[strum(ascii_case_insensitive)]
 pub enum Kind {
     Static,
@@ -16,10 +16,10 @@ pub struct SymbolTable {
 
 #[derive(Debug, PartialEq)]
 pub struct Entrie {
-    name: String,
-    r#type: String,
-    kind: Kind,
-    index: u16,
+    pub name: String,
+    pub r#type: String,
+    pub kind: Kind,
+    pub index: u16,
 }
 
 impl SymbolTable {

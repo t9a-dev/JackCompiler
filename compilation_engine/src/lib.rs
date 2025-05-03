@@ -5,10 +5,11 @@ use std::{
     str::FromStr,
     sync::{Arc, Mutex},
 };
-use strum_macros::AsRefStr;
-use symbol_table::{Kind, SymbolTable};
+use strum_macros::{AsRefStr, EnumString};
+use symbol_table::{Entrie, Kind, SymbolTable};
 
-#[derive(Debug, AsRefStr)]
+#[derive(Debug, AsRefStr, EnumString)]
+#[strum(ascii_case_insensitive)]
 pub enum Category {
     Field,
     Static,
@@ -51,7 +52,7 @@ impl CompilationEngine {
         self.tokenizer.advance()?;
         self.write_start_xml_tag(tag_name)?;
         self.process_token("class")?;
-        self.process_identifier()?;
+        self.process_identifier(Category::Class, Usage::Declare)?;
         self.process_token("{")?;
         self.compile_class_var_dec()?;
         self.compile_subroutine()?;
@@ -81,18 +82,29 @@ impl CompilationEngine {
                 .or_else(|_| Ok(self.process_token("field")?))?;
             // type -> "int"|"char"|"boolean"|className
             let symbol_entrie_type = self.process_type()?;
-            let symbol_entrie_name = self.process_identifier()?;
             self.class_symbol_table.define(
-                &symbol_entrie_name,
+                self.tokenizer.identifer()?.as_str(),
                 &symbol_entrie_type,
                 Kind::from_str(&symbol_entrie_kind)?,
             );
-            // 次のトークンを先読みして","であれば複数varNameが存在するので対応する
+            self.process_identifier(
+                Category::from_str(&symbol_entrie_kind)?,
+                Usage::Declare,
+            )?;
+            // 現在のトークンが","であれば複数varNameが存在するので対応する
             while self.tokenizer.token_type()? == TokenType::Symbol
                 && self.tokenizer.symbol()? == ","
             {
                 self.process_token(",")?;
-                self.process_identifier()?;
+                self.class_symbol_table.define(
+                    self.tokenizer.identifer()?.as_str(),
+                    &symbol_entrie_type,
+                    Kind::from_str(&symbol_entrie_kind)?,
+                );
+                self.process_identifier(
+                    Category::from_str(&symbol_entrie_kind)?,
+                    Usage::Declare,
+                )?;
             }
             self.process_token(";")?;
             self.write_end_xml_tag(tag_name)?;
@@ -126,23 +138,19 @@ impl CompilationEngine {
             let tag_name = "subroutineDec";
             self.write_start_xml_tag(tag_name)?;
 
-            let is_method  = self.process_token("constructor").or_else(|_| {
+            let is_method = self.process_token("constructor").or_else(|_| {
                 self.process_token("function")
                     .or_else(|_| Ok(self.process_token("method")?))
             })? == "method";
             // "void"|type
-            self
-                .process_token("void")
+            self.process_token("void")
                 .or_else(|_| Ok(self.process_type()?))?;
-            let symbol_entrie_name = self.process_identifier()?;
+            let symbol_entrie_name = self.process_identifier(Category::Subroutine, Usage::Declare)?;
             self.subroutine_symbol_table.reset(); //　仕様によりサブルーチンコンパイル開始時に初期化する
-            // 仕様によりメソッドの場合はthisをシンボルテーブルに追加する
+                                                  // 仕様によりメソッドの場合はthisをシンボルテーブルに追加する
             if is_method {
-                self.subroutine_symbol_table.define(
-                    "this",
-                    &symbol_entrie_name,
-                    Kind::Arg,
-                );
+                self.subroutine_symbol_table
+                    .define("this", &symbol_entrie_name, Kind::Arg);
             }
             self.process_token("(")?;
             self.compile_parameter_list()?;
@@ -177,17 +185,25 @@ impl CompilationEngine {
         ) {
             let symbol_entrie_kind = Kind::Arg; // サブルーチンのパラメータリストコンパイルなのでArg固定
             let symbol_entrie_type = self.process_type()?;
-            let symbol_entrie_name =self.process_identifier()?;
-            self.subroutine_symbol_table.define(&symbol_entrie_name, &symbol_entrie_type, symbol_entrie_kind);
+            self.subroutine_symbol_table.define(
+                self.tokenizer.identifer()?.as_str(),
+                &symbol_entrie_type,
+                symbol_entrie_kind,
+            );
+            self.process_identifier(Category::Arg, Usage::Declare)?;
 
-            // 次のトークンを先読みして","であれば複数varNameが存在するので対応する
+            // 現在のトークン","であれば複数varNameが存在するので対応する
             while self.tokenizer.token_type()? == TokenType::Symbol
                 && self.tokenizer.symbol()? == ","
             {
                 self.process_token(",")?;
                 let symbol_entrie_type = self.process_type()?;
-                let symbol_entrie_name = self.process_identifier()?;
-                self.subroutine_symbol_table.define(&symbol_entrie_name, &symbol_entrie_type, symbol_entrie_kind);
+                self.subroutine_symbol_table.define(
+                    self.tokenizer.identifer()?.as_str(),
+                    &symbol_entrie_type,
+                    symbol_entrie_kind,
+                );
+                self.process_identifier(Category::Arg, Usage::Declare)?;
             }
         }
 
@@ -218,14 +234,23 @@ impl CompilationEngine {
 
         let symbol_entrie_kind = Kind::Var; // サブルーチンボディのコンパイルなのでVar固定
         self.process_token("var")?;
-        let symbol_entrie_type =  self.process_type()?;
-        let symbol_entrie_name = self.process_identifier()?;
-        self.subroutine_symbol_table.define(&symbol_entrie_name, &symbol_entrie_type, symbol_entrie_kind);
-        // 次のトークンを先読みして","であれば複数varNameが存在するので対応する
+        let symbol_entrie_type = self.process_type()?;
+        self.subroutine_symbol_table.define(
+            self.tokenizer.identifer()?.as_str(),
+            &symbol_entrie_type,
+            symbol_entrie_kind,
+        );
+        self.process_identifier(Category::Var,Usage::Declare)?;
+        // 現在のトークンが","であれば複数varNameが存在するので対応する
         while self.tokenizer.token_type()? == TokenType::Symbol && self.tokenizer.symbol()? == "," {
+            let symbol_entrie_type = symbol_entrie_type.as_str();
             self.process_token(",")?;
-            let symbol_entrie_name = self.process_identifier()?;
-            self.subroutine_symbol_table.define(&symbol_entrie_name, &symbol_entrie_type, symbol_entrie_kind);
+            self.subroutine_symbol_table.define(
+                self.tokenizer.identifer()?.as_str(),
+                &symbol_entrie_type,
+                symbol_entrie_kind,
+            );
+            self.process_identifier(Category::Var, Usage::Declare)?;
         }
         self.process_token(";")?;
 
@@ -254,7 +279,6 @@ impl CompilationEngine {
             }
         }
         self.write_end_xml_tag(tag_name)?;
-        todo!();
         Ok(())
     }
 
@@ -263,7 +287,7 @@ impl CompilationEngine {
         self.write_start_xml_tag(tag_name)?;
 
         self.process_token("let")?;
-        self.process_identifier()?;
+        self.process_identifier(Category::Var,Usage::Declare)?;
         if self.tokenizer.token_type()? == TokenType::Symbol && self.tokenizer.symbol()? == "[" {
             self.process_token("[")?;
             self.compile_expression()?;
@@ -324,7 +348,19 @@ impl CompilationEngine {
         self.process_token("do")?;
         // subroutine call
         {
-            self.process_identifier()?;
+            if self.tokenizer.next_token().unwrap() == "." {
+                // subroutine_symbol_tableにidentifierの登録がなければclassNameとして扱う
+                let identifier_category = match self
+                    .subroutine_symbol_table
+                    .kind_of(self.tokenizer.identifer()?.as_str())
+                {
+                    Some(_) => Category::Var,
+                    None => Category::Class,
+                };
+                self.process_identifier(identifier_category,Usage::Use)?;
+            } else {
+                self.process_identifier(Category::Subroutine, Usage::Use)?;
+            }
 
             if self.tokenizer.token_type()? == TokenType::Symbol && self.tokenizer.symbol()? == "("
             {
@@ -333,7 +369,7 @@ impl CompilationEngine {
                 self.process_token(")")?;
             } else {
                 self.process_token(".")?;
-                self.process_identifier()?;
+                self.process_identifier(Category::Subroutine, Usage::Use)?;
                 self.process_token("(")?;
                 self.compile_expression_list()?;
                 self.process_token(")")?;
@@ -399,7 +435,23 @@ impl CompilationEngine {
                 }
             }
             TokenType::Identifier => {
-                self.process_identifier()?;
+                // subroutine_symbol_tableにidentifierの登録がなければclassNameとして扱う
+                let identifier_category = match self
+                    .subroutine_symbol_table
+                    .kind_of(self.tokenizer.identifer()?.as_str())
+                {
+                    Some(_) => Category::Arg,
+                    None => {
+                        match self
+                            .class_symbol_table
+                            .kind_of(self.tokenizer.identifer()?.as_str())
+                        {
+                            Some(kind) => Category::from_str(kind.as_ref())?,
+                            None => Category::Class,
+                        }
+                    }
+                };
+                self.process_identifier(identifier_category, Usage::Use)?;
                 if self.tokenizer.token_type()? == TokenType::Symbol {
                     match self.tokenizer.symbol()?.as_str() {
                         "[" => {
@@ -414,7 +466,7 @@ impl CompilationEngine {
                         }
                         "." => {
                             self.process_token(".")?;
-                            self.process_identifier()?;
+                            self.process_identifier(Category::Subroutine, Usage::Use)?;
                             self.process_token("(")?;
                             self.compile_expression_list()?;
                             self.process_token(")")?;
@@ -497,24 +549,17 @@ impl CompilationEngine {
         Ok(current_token.to_string())
     }
 
-    fn process_identifier(&mut self) -> Result<String> {
+    fn process_identifier(&mut self, category: Category, usage: Usage) -> Result<String> {
         if self.tokenizer.token_type()? == TokenType::Identifier {
-            let identifier = &self.tokenizer.identifer()?;
-            self.write_xml(
-                &self
-                    .tokenizer
-                    .token_type()?
-                    .as_ref()
-                    .to_string()
-                    .to_lowercase(),
-                &identifier,
-            )?;
+            let identifier_name = &self.tokenizer.identifer()?;
+            self.write_identifier_xml(&identifier_name, category, usage)?;
             self.tokenizer.advance()?;
-            Ok(identifier.to_string())
+            Ok(identifier_name.to_string())
         } else {
             return Err(anyhow!(
-                "syntax error current token type is not identifier: {:?}",
-                self.tokenizer.token_type()?
+                "syntax error current token type is not identifier: {:?}, current token {}",
+                self.tokenizer.token_type()?,
+                self.tokenizer.current_token.clone().unwrap(),
             ));
         }
     }
@@ -523,7 +568,7 @@ impl CompilationEngine {
         Ok(self.process_token("int").or_else(|_| {
             self.process_token("char").or_else(|_| {
                 self.process_token("boolean")
-                    .or_else(|_| Ok(self.process_identifier()?))
+                    .or_else(|_| Ok(self.process_identifier(Category::Class, Usage::Use)?))
             })
         })?)
     }
@@ -572,16 +617,29 @@ impl CompilationEngine {
         &mut self,
         name: &str,
         category: Category,
-        index: u16,
         usage: Usage,
-        tag_name: &str,
     ) -> Result<()> {
-        let category = category.as_ref().to_string();
-        let index = index.to_string();
-        let usage = usage.as_ref().to_string();
-        self.write(&format!(
-            r#"<{tag_name} name="{name}" category="{category}" index={index} usage={usage} >"#
-        ))?;
+        let tag_name = "identifier";
+        let usage = usage
+            .as_ref()
+            .to_string();
+        match self
+            .class_symbol_table
+            .index_of(name)
+            .or_else(|_| Ok(self.subroutine_symbol_table.index_of(name)?))
+        {
+            Result::Ok(index) => {
+                self.write(&format!(
+                    r#"<{tag_name} name="{name}" category="{}" index={index} usage="{usage}">"#,
+                    category.as_ref().to_string()
+                ))?;
+            }
+            Err(_) => self.write(&format!(
+                r#"<{tag_name} name="{name}" category="{}" usage="{usage}">"#,
+                category.as_ref().to_string()
+            ))?,
+        }
+
         self.write(&format!(" {name} "))?;
         self.write(&format!("</{tag_name}>\n"))?;
         Ok(())

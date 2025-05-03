@@ -62,7 +62,7 @@ pub enum KeyWord {
 
 pub struct JackTokenizer {
     tokens: Vec<String>,
-    current_token: Option<String>,
+    pub current_token: Option<String>,
 }
 
 impl JackTokenizer {
@@ -89,6 +89,10 @@ impl JackTokenizer {
             self.tokens = tokens.collect();
         }
         Ok(())
+    }
+
+    pub fn next_token(&self) -> Option<String> {
+        self.tokens.iter().next().cloned()
     }
 
     pub fn token_type(&self) -> Result<TokenType> {
