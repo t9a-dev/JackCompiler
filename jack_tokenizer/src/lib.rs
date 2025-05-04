@@ -23,7 +23,7 @@ macro_rules! alphabet_letter {
     };
 }
 
-#[derive(Debug, PartialEq, AsRefStr, EnumIter)]
+#[derive(Debug, Clone, PartialEq, AsRefStr, EnumIter)]
 pub enum TokenType {
     KeyWord,
     Symbol,
@@ -34,7 +34,7 @@ pub enum TokenType {
     StringConst,
 }
 
-#[derive(Debug, PartialEq, AsRefStr, EnumIter, EnumString)]
+#[derive(Debug, Clone, PartialEq, AsRefStr, EnumIter, EnumString)]
 #[strum(ascii_case_insensitive)]
 pub enum KeyWord {
     Class,

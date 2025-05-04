@@ -39,6 +39,7 @@ dependencies = [
  "strum",
  "strum_macros",
  "symbol_table",
+ "vm_writer",
 ]
 
 [[package]]
@@ -270,6 +271,9 @@ name = "vm_writer"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "strum",
+ "strum_macros",
+ "symbol_table",
 ]
 
 [[package]]

@@ -8,6 +8,7 @@ use anyhow::{Result, anyhow};
 use compilation_engine::CompilationEngine;
 use jack_tokenizer::JackTokenizer;
 use symbol_table::SymbolTable;
+use vm_writer::VMWriter;
 
 const JACK_FILE_EXTENSION: &str = "jack";
 const OUTPUT_FILE_EXTENSION: &str = "xml";
@@ -62,19 +63,26 @@ fn jack_compiler(path_str: &str) -> Result<()> {
     analyze_target_paths
         .iter()
         .try_for_each(|jack_file| -> Result<()> {
-            let output_file_path = jack_file.parent().unwrap().join(format!(
+            let xml_output_file_path = jack_file.parent().unwrap().join(format!(
                 "{}.{}",
                 jack_file.file_stem().unwrap().to_string_lossy().to_string(),
                 OUTPUT_FILE_EXTENSION
             ));
-            let output_file = Arc::new(Mutex::new(File::create(&output_file_path)?));
+            let vm_output_file_path = jack_file.parent().unwrap().join(format!(
+                "{}.{}",
+                jack_file.file_stem().unwrap().to_string_lossy().to_string(),
+                "vm"
+            ));
+            let xml_output_file = Arc::new(Mutex::new(File::create(&xml_output_file_path)?));
+            let vm_output_file = Arc::new(Mutex::new(File::create(&vm_output_file_path)?));
             let tokenizer = JackTokenizer::new(File::open(jack_file)?)
                 .expect(&format!("jack_toknizer initialize failed: {:?}", jack_file));
             let class_symbol_table = SymbolTable::new();
             let subroutine_symbol_table = SymbolTable::new();
             let mut compilation_engine = CompilationEngine::new(
                 tokenizer,
-                output_file,
+                xml_output_file,
+                VMWriter::new(vm_output_file),
                 class_symbol_table,
                 subroutine_symbol_table,
             )?;
@@ -94,6 +102,7 @@ mod tests {
         fs::{self, File},
         io::Cursor,
     };
+    use vm_writer::VMWriter;
 
     use rand::distr::{Alphanumeric, SampleString};
     use walkdir::WalkDir;
@@ -101,7 +110,7 @@ mod tests {
     use super::*;
 
     const TEST_DIR: &str = "target/test/data";
-    const TEST_JACK_DIR: &str = "test_files";
+    const TEST_JACK_DIR: &str = "test_files/11/Seven";
 
     fn create_test_file(test_dir: Option<&str>, test_file_extension: &str) -> Result<String> {
         let test_dir = test_dir.or(Some("target/test/data")).unwrap();
@@ -159,7 +168,7 @@ mod tests {
     }
 
     #[test]
-    fn run_analyze_use_tokenized_xml_writer() -> Result<()> {
+    fn run_jack_compiler() -> Result<()> {
         let jack_file_paths =
             find_files_with_extension(Path::new(TEST_JACK_DIR), JACK_FILE_EXTENSION)?;
 
@@ -184,6 +193,7 @@ mod tests {
             let mut compilation_engine = CompilationEngine::new(
                 tokenizer,
                 output.clone(),
+                VMWriter::new(output.clone()),
                 class_symbol_table,
                 subroutine_symbol_table,
             )?;
@@ -193,6 +203,7 @@ mod tests {
             let output = output.lock().unwrap();
             let _actual = String::from_utf8_lossy(output.get_ref());
 
+            assert_eq!(compilation_engine.expressions, vec![]);
             // assert_eq!(expect, actual);
             Ok(())
         })?;

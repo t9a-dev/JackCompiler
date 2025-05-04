@@ -6,9 +6,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 use strum_macros::{AsRefStr, EnumString};
-use symbol_table::{Entrie, Kind, SymbolTable};
+use symbol_table::{Kind, SymbolTable};
+use vm_writer::{ArithmeticCommand, Segment, VMWriter};
 
-#[derive(Debug, AsRefStr, EnumString)]
+#[derive(Debug, Clone, PartialEq, AsRefStr, EnumString)]
 #[strum(ascii_case_insensitive)]
 pub enum Category {
     Field,
@@ -17,33 +18,64 @@ pub enum Category {
     Arg,
     Class,
     Subroutine,
+    IntConst,
+    StringConst,
 }
 
-#[derive(Debug, AsRefStr)]
+#[derive(Debug, Clone, PartialEq, AsRefStr)]
 pub enum Usage {
     Declare,
     Use,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExpressionNode {
+    pub term: String,
+    pub usage: Usage,
+    pub category: Option<Category>,
+    pub arithmetic_cmd: Option<ArithmeticCommand>,
+}
+
+impl ExpressionNode {
+    pub fn new(
+        term: &str,
+        usage: Usage,
+        category: Option<Category>,
+        command: Option<ArithmeticCommand>,
+    ) -> Self {
+        Self {
+            term: term.to_string(),
+            usage,
+            category,
+            arithmetic_cmd: command,
+        }
+    }
+}
+
 pub struct CompilationEngine {
     tokenizer: JackTokenizer,
-    writer: Arc<Mutex<dyn Write>>,
+    xml_writer: Arc<Mutex<dyn Write>>,
+    vm_writer: VMWriter,
     class_symbol_table: SymbolTable,
     subroutine_symbol_table: SymbolTable,
+    pub expressions: Vec<ExpressionNode>,
 }
 
 impl CompilationEngine {
     pub fn new(
         tokenizer: JackTokenizer,
-        writer: Arc<Mutex<dyn Write>>,
+        xml_writer: Arc<Mutex<dyn Write>>,
+        vm_writer: VMWriter,
         class_symbol_table: SymbolTable,
         subroutine_symbol_table: SymbolTable,
     ) -> Result<Self> {
         Ok(Self {
             tokenizer,
-            writer,
+            xml_writer,
+            vm_writer,
             class_symbol_table,
             subroutine_symbol_table,
+            expressions: Vec::new(),
         })
     }
 
@@ -87,10 +119,7 @@ impl CompilationEngine {
                 &symbol_entrie_type,
                 Kind::from_str(&symbol_entrie_kind)?,
             );
-            self.process_identifier(
-                Category::from_str(&symbol_entrie_kind)?,
-                Usage::Declare,
-            )?;
+            self.process_identifier(Category::from_str(&symbol_entrie_kind)?, Usage::Declare)?;
             // 現在のトークンが","であれば複数varNameが存在するので対応する
             while self.tokenizer.token_type()? == TokenType::Symbol
                 && self.tokenizer.symbol()? == ","
@@ -101,10 +130,7 @@ impl CompilationEngine {
                     &symbol_entrie_type,
                     Kind::from_str(&symbol_entrie_kind)?,
                 );
-                self.process_identifier(
-                    Category::from_str(&symbol_entrie_kind)?,
-                    Usage::Declare,
-                )?;
+                self.process_identifier(Category::from_str(&symbol_entrie_kind)?, Usage::Declare)?;
             }
             self.process_token(";")?;
             self.write_end_xml_tag(tag_name)?;
@@ -145,7 +171,8 @@ impl CompilationEngine {
             // "void"|type
             self.process_token("void")
                 .or_else(|_| Ok(self.process_type()?))?;
-            let symbol_entrie_name = self.process_identifier(Category::Subroutine, Usage::Declare)?;
+            let symbol_entrie_name =
+                self.process_identifier(Category::Subroutine, Usage::Declare)?;
             self.subroutine_symbol_table.reset(); //　仕様によりサブルーチンコンパイル開始時に初期化する
                                                   // 仕様によりメソッドの場合はthisをシンボルテーブルに追加する
             if is_method {
@@ -240,7 +267,7 @@ impl CompilationEngine {
             &symbol_entrie_type,
             symbol_entrie_kind,
         );
-        self.process_identifier(Category::Var,Usage::Declare)?;
+        self.process_identifier(Category::Var, Usage::Declare)?;
         // 現在のトークンが","であれば複数varNameが存在するので対応する
         while self.tokenizer.token_type()? == TokenType::Symbol && self.tokenizer.symbol()? == "," {
             let symbol_entrie_type = symbol_entrie_type.as_str();
@@ -287,13 +314,15 @@ impl CompilationEngine {
         self.write_start_xml_tag(tag_name)?;
 
         self.process_token("let")?;
-        self.process_identifier(Category::Var,Usage::Declare)?;
+        self.process_identifier(Category::Var, Usage::Declare)?;
         if self.tokenizer.token_type()? == TokenType::Symbol && self.tokenizer.symbol()? == "[" {
             self.process_token("[")?;
+            self.clear_expressions();
             self.compile_expression()?;
             self.process_token("]")?;
         }
         self.process_token("=")?;
+        self.clear_expressions();
         self.compile_expression()?;
         self.process_token(";")?;
 
@@ -307,6 +336,7 @@ impl CompilationEngine {
 
         self.process_token("if")?;
         self.process_token("(")?;
+        self.clear_expressions();
         self.compile_expression()?;
         self.process_token(")")?;
         self.process_token("{")?;
@@ -331,6 +361,7 @@ impl CompilationEngine {
 
         self.process_token("while")?;
         self.process_token("(")?;
+        self.clear_expressions();
         self.compile_expression()?;
         self.process_token(")")?;
         self.process_token("{")?;
@@ -347,37 +378,13 @@ impl CompilationEngine {
 
         self.process_token("do")?;
         // subroutine call
-        {
-            if self.tokenizer.next_token().unwrap() == "." {
-                // subroutine_symbol_tableにidentifierの登録がなければclassNameとして扱う
-                let identifier_category = match self
-                    .subroutine_symbol_table
-                    .kind_of(self.tokenizer.identifer()?.as_str())
-                {
-                    Some(_) => Category::Var,
-                    None => Category::Class,
-                };
-                self.process_identifier(identifier_category,Usage::Use)?;
-            } else {
-                self.process_identifier(Category::Subroutine, Usage::Use)?;
-            }
-
-            if self.tokenizer.token_type()? == TokenType::Symbol && self.tokenizer.symbol()? == "("
-            {
-                self.process_token("(")?;
-                self.compile_expression_list()?;
-                self.process_token(")")?;
-            } else {
-                self.process_token(".")?;
-                self.process_identifier(Category::Subroutine, Usage::Use)?;
-                self.process_token("(")?;
-                self.compile_expression_list()?;
-                self.process_token(")")?;
-            }
-        }
+        self.clear_expressions();
+        self.compile_expression()?;
         self.process_token(";")?;
 
         self.write_end_xml_tag(tag_name)?;
+        self.write_vm_code()?;
+        self.clear_expressions();
         Ok(())
     }
 
@@ -388,11 +395,14 @@ impl CompilationEngine {
         self.process_token("return")?;
         // expression
         if self.has_expression()? {
+            self.clear_expressions();
             self.compile_expression()?;
         }
         self.process_token(";")?;
 
         self.write_end_xml_tag(tag_name)?;
+        self.vm_writer.write_return()?;
+        self.clear_expressions();
         Ok(())
     }
 
@@ -407,8 +417,19 @@ impl CompilationEngine {
                 "+" | "-" | "*" | "/" | "&" | "|" | "<" | ">" | "="
             )
         {
-            self.process_token(self.tokenizer.symbol()?.as_str())?;
+            let symbol = self.tokenizer.symbol()?;
+            let term = self.process_token(&symbol)?;
             self.compile_term()?;
+            let expression_node = ExpressionNode {
+                term: term,
+                usage: Usage::Use,
+                category: None,
+                arithmetic_cmd: Some(
+                    ArithmeticCommand::from_str(&symbol)
+                        .expect(&format!("strum from_str not found: {:?}", symbol)),
+                ),
+            };
+            self.add_expression(expression_node)?;
         }
 
         self.write_end_xml_tag(tag_name)?;
@@ -430,8 +451,20 @@ impl CompilationEngine {
                     self.compile_expression()?;
                     self.process_token(")")?;
                 } else {
-                    self.process_token(&symbol)?;
+                    // Sub,Negはシンボルが"-"で重複しているので調整
+                    let arithmetic_cmd = match symbol.as_str() {
+                        "-" => ArithmeticCommand::Neg,
+                        _ => ArithmeticCommand::from_str(&symbol)
+                            .expect(&format!("strum from_str err: {:?}", symbol)),
+                    };
+                    let expression_node = ExpressionNode {
+                        term: self.process_token(&symbol)?,
+                        usage: Usage::Use,
+                        category: None,
+                        arithmetic_cmd: Some(arithmetic_cmd),
+                    };
                     self.compile_term()?;
+                    self.add_expression(expression_node)?;
                 }
             }
             TokenType::Identifier => {
@@ -451,7 +484,8 @@ impl CompilationEngine {
                         }
                     }
                 };
-                self.process_identifier(identifier_category, Usage::Use)?;
+                let identifier_name =
+                    self.process_identifier(identifier_category.clone(), Usage::Use)?;
                 if self.tokenizer.token_type()? == TokenType::Symbol {
                     match self.tokenizer.symbol()?.as_str() {
                         "[" => {
@@ -466,20 +500,49 @@ impl CompilationEngine {
                         }
                         "." => {
                             self.process_token(".")?;
-                            self.process_identifier(Category::Subroutine, Usage::Use)?;
+                            let identifier_name = identifier_name
+                                + "."
+                                + self
+                                    .process_identifier(Category::Subroutine, Usage::Use)?
+                                    .as_str();
                             self.process_token("(")?;
                             self.compile_expression_list()?;
                             self.process_token(")")?;
+                            self.add_expression(ExpressionNode::new(
+                                &identifier_name,
+                                Usage::Use,
+                                Some(identifier_category),
+                                None,
+                            ))?;
                         }
-                        _ => (),
+                        _ => {
+                            self.add_expression(ExpressionNode::new(
+                                &identifier_name,
+                                Usage::Use,
+                                Some(identifier_category),
+                                None,
+                            ))?;
+                        }
                     }
                 }
             }
             TokenType::IntConst => {
-                self.process_token(self.tokenizer.int_val()?.to_string().as_str())?;
+                let term = self.process_token(self.tokenizer.int_val()?.to_string().as_str())?;
+                self.add_expression(ExpressionNode::new(
+                    &term,
+                    Usage::Use,
+                    Some(Category::IntConst),
+                    None,
+                ))?;
             }
             TokenType::StringConst => {
-                self.process_token(self.tokenizer.string_val()?.as_str())?;
+                let term = self.process_token(self.tokenizer.string_val()?.as_str())?;
+                self.add_expression(ExpressionNode::new(
+                    &term,
+                    Usage::Use,
+                    Some(Category::StringConst),
+                    None,
+                ))?;
             }
         }
 
@@ -533,7 +596,7 @@ impl CompilationEngine {
                             .as_ref()
                             .to_string()
                             .to_lowercase(),
-                        self.escape_xml_symbol(&current_token),
+                        &current_token,
                     )?;
                 } else {
                     return Err(anyhow!(
@@ -552,7 +615,7 @@ impl CompilationEngine {
     fn process_identifier(&mut self, category: Category, usage: Usage) -> Result<String> {
         if self.tokenizer.token_type()? == TokenType::Identifier {
             let identifier_name = &self.tokenizer.identifer()?;
-            self.write_identifier_xml(&identifier_name, category, usage)?;
+            self.write_identifier(&identifier_name, category, usage)?;
             self.tokenizer.advance()?;
             Ok(identifier_name.to_string())
         } else {
@@ -586,14 +649,13 @@ impl CompilationEngine {
         }
     }
 
-    fn escape_xml_symbol<'a>(&self, v: &'a str) -> &'a str {
-        match v {
-            "<" => "&lt;",
-            ">" => "&gt;",
-            "\"" => "&quot;",
-            "&" => "&amp;",
-            _ => v,
-        }
+    fn add_expression(&mut self, node: ExpressionNode) -> Result<()> {
+        self.expressions.push(node);
+        Ok(())
+    }
+
+    fn clear_expressions(&mut self) {
+        self.expressions.clear();
     }
 
     fn write_start_xml_tag(&mut self, tag_name: &str) -> Result<()> {
@@ -613,16 +675,9 @@ impl CompilationEngine {
         Ok(())
     }
 
-    fn write_identifier_xml(
-        &mut self,
-        name: &str,
-        category: Category,
-        usage: Usage,
-    ) -> Result<()> {
+    fn write_identifier(&mut self, name: &str, category: Category, usage: Usage) -> Result<()> {
         let tag_name = "identifier";
-        let usage = usage
-            .as_ref()
-            .to_string();
+        let usage = usage.as_ref().to_string();
         match self
             .class_symbol_table
             .index_of(name)
@@ -645,9 +700,35 @@ impl CompilationEngine {
         Ok(())
     }
 
+    fn write_vm_code(&mut self) -> Result<()> {
+        let mut expressions = self.expressions.iter();
+        while let Some(expression) = expressions.next() {
+            match &expression.category {
+                Some(category) => {
+                    match category {
+                        Category::IntConst => self
+                            .vm_writer
+                            .write_push(Segment::Constant, expression.term.parse::<u16>()?)?,
+                        Category::Class | Category::Subroutine => {
+                            // TODO: n_args use computed value
+                            self.vm_writer.write_call(&expression.term, 1)?
+                        }
+                        Category::StringConst => todo!(),
+                        _ => todo!(),
+                    }
+                }
+                None => match &expression.arithmetic_cmd {
+                    Some(cmd) => self.vm_writer.write_arithmetic(cmd.clone())?,
+                    None => (),
+                },
+            }
+        }
+        Ok(())
+    }
+
     fn write(&mut self, content: &str) -> Result<()> {
-        self.writer.lock().unwrap().write(content.as_bytes())?;
-        self.writer.lock().unwrap().flush()?;
+        self.xml_writer.lock().unwrap().write(content.as_bytes())?;
+        self.xml_writer.lock().unwrap().flush()?;
         Ok(())
     }
 }
@@ -660,6 +741,7 @@ mod tests {
         sync::{Arc, Mutex},
     };
     use symbol_table::SymbolTable;
+    use vm_writer::VMWriter;
 
     use jack_tokenizer::JackTokenizer;
 
@@ -677,6 +759,7 @@ mod tests {
         let mut compilation_engine = CompilationEngine::new(
             tokenizer,
             output.clone(),
+            VMWriter::new(output.clone()),
             class_symbol_table,
             subroutine_symbol_table,
         )?;
