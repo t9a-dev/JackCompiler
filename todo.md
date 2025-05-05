@@ -1,1 +1,2 @@
-- [ ] termがkeywordConstantの場合の処理を実装する
+- [x] termがkeywordConstantの場合の処理を実装する
+- [ ] refactor:Enumで名称が同じものが散在しているのでまとめたほうが良いのか、fromトレイトを実装して変換するのかなどを検討する

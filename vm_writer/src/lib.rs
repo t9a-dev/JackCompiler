@@ -64,13 +64,13 @@ impl VMWriter {
         Self { writer }
     }
 
-    pub fn write_push(&mut self, segment: Segment, index: u16) -> Result<()> {
+    pub fn write_push(&mut self, segment: Segment, index: i16) -> Result<()> {
         let segment = segment.as_ref().to_lowercase();
         self.write_code(&format!("push {segment} {index}\n"))?;
         Ok(())
     }
 
-    pub fn write_pop(&mut self, segment: Segment, index: u16) -> Result<()> {
+    pub fn write_pop(&mut self, segment: Segment, index: i16) -> Result<()> {
         let segment = segment.as_ref().to_lowercase();
         self.write_code(&format!("pop {segment} {index}\n"))?;
         Ok(())

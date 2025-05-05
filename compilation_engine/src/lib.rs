@@ -23,6 +23,7 @@ pub enum Category {
     Subroutine(u16),
     IntConst,
     StringConst,
+    KeyWordConst,
 }
 
 #[derive(Debug, Clone, PartialEq, AsRefStr)]
@@ -350,14 +351,15 @@ impl CompilationEngine {
         self.compile_expression()?;
         self.process_token(";")?;
 
-        self.write_end_xml_tag(tag_name)?;
         let expression = ExpressionNode {
             term: var_name.clone(),
-            usage: Usage::Use,
+            usage: Usage::Declare,
             category: Some(Category::Let),
             arithmetic_cmd: None,
         };
         self.add_expression(expression)?;
+
+        self.write_end_xml_tag(tag_name)?;
         Ok(())
     }
 
@@ -465,7 +467,18 @@ impl CompilationEngine {
 
         match self.tokenizer.token_type()? {
             TokenType::KeyWord => {
+                let boolean_str_val = match self.tokenizer.keyword()? {
+                    KeyWord::True => Some("-1"),
+                    KeyWord::False => Some("0"),
+                    _ => None,
+                };
                 self.process_token(self.tokenizer.keyword()?.as_ref().to_lowercase().as_str())?;
+
+                if let Some(term) = boolean_str_val {
+                    let expression =
+                        ExpressionNode::new(&term, Usage::Use, Some(Category::KeyWordConst), None);
+                    self.add_expression(expression)?;
+                }
             }
             TokenType::Symbol => {
                 let symbol = self.tokenizer.symbol()?;
@@ -494,7 +507,7 @@ impl CompilationEngine {
                 // subroutine_symbol_tableにidentifierの登録がなければclassNameとして扱う
                 let identifier_category =
                     match self.find_symbol_kind(self.tokenizer.identifer()?.as_str()) {
-                        Some(_) => Category::Arg,
+                        Some(kind) => Category::from_str(kind.as_ref())?,
                         None => {
                             match self
                                 .class_symbol_table
@@ -673,8 +686,8 @@ impl CompilationEngine {
         }
     }
 
-    fn add_expression(&mut self, node: ExpressionNode) -> Result<()> {
-        self.expressions.push(node);
+    fn add_expression(&mut self, expression: ExpressionNode) -> Result<()> {
+        self.expressions.push(expression);
         Ok(())
     }
 
@@ -748,16 +761,22 @@ impl CompilationEngine {
         while let Some(expression) = expressions.next() {
             match &expression.category {
                 Some(category) => match category {
-                    Category::IntConst => self
+                    Category::IntConst | Category::KeyWordConst => self
                         .vm_writer
-                        .write_push(Segment::Constant, expression.term.parse::<u16>()?)?,
+                        .write_push(Segment::Constant, expression.term.parse::<i16>()?)?,
                     Category::Class(n_args) | Category::Subroutine(n_args) => {
                         self.vm_writer.write_call(&expression.term, *n_args)?
                     }
                     Category::Let => {
                         self.vm_writer.write_pop(
                             Segment::from(self.find_symbol_kind(&expression.term).unwrap()),
-                            self.find_symbol_index(&expression.term)?,
+                            self.find_symbol_index(&expression.term)?.try_into()?,
+                        )?;
+                    }
+                    Category::Var => {
+                        self.vm_writer.write_push(
+                            Segment::from(self.find_symbol_kind(&expression.term).unwrap()),
+                            self.find_symbol_index(&expression.term)?.try_into()?,
                         )?;
                     }
                     Category::StringConst => todo!(),
