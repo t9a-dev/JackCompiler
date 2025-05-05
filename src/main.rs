@@ -110,7 +110,17 @@ mod tests {
     use super::*;
 
     const TEST_DIR: &str = "target/test/data";
-    const TEST_JACK_DIR: &str = "test_files/11/Seven";
+    const TEST_JACK_DIR: &str = "test_files/11/ConvertToBin";
+
+    fn setup_tracing() {
+        static INIT: std::sync::Once = std::sync::Once::new();
+        INIT.call_once(|| {
+            tracing_subscriber::fmt()
+                .with_max_level(tracing::Level::DEBUG)
+                .with_test_writer()
+                .init();
+        });
+    }
 
     fn create_test_file(test_dir: Option<&str>, test_file_extension: &str) -> Result<String> {
         let test_dir = test_dir.or(Some("target/test/data")).unwrap();
@@ -169,6 +179,7 @@ mod tests {
 
     #[test]
     fn run_jack_compiler() -> Result<()> {
+        setup_tracing();
         let jack_file_paths =
             find_files_with_extension(Path::new(TEST_JACK_DIR), JACK_FILE_EXTENSION)?;
 
@@ -176,11 +187,12 @@ mod tests {
             .iter()
             .try_for_each(|jack_file_path| jack_compiler(&jack_file_path))?;
 
-        Ok(())
+        Err(anyhow!("debugging"))
     }
 
     #[test]
     fn run_compile() -> Result<()> {
+        setup_tracing();
         let jack_file_paths =
             find_files_with_extension(Path::new(TEST_JACK_DIR), JACK_FILE_EXTENSION)?;
 

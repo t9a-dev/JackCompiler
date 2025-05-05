@@ -49,7 +49,7 @@ pub enum ArithmeticCommand {
     And,
     #[strum(serialize = "|", to_string = "or")]
     Or,
-    #[strum(serialize = "!", to_string = "not")]
+    #[strum(serialize = "~", to_string = "not")]
     Not,
     #[strum(serialize = "*", to_string = "call Math.multiply 2")]
     Multiply,
@@ -108,7 +108,7 @@ impl VMWriter {
     }
 
     pub fn write_return(&mut self) -> Result<()> {
-        self.write_code("return\n")?;
+        self.write_code("return\n\n")?;
         Ok(())
     }
 
@@ -116,6 +116,10 @@ impl VMWriter {
         self.writer.lock().unwrap().flush()?;
         drop(self.writer.lock().unwrap());
         Ok(())
+    }
+
+    pub fn write_ln(&mut self) {
+        self.write_code("\n").unwrap();
     }
 
     fn write_code(&mut self, content: &str) -> Result<()> {

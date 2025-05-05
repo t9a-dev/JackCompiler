@@ -10,6 +10,7 @@ pub enum Kind {
     Var,
 }
 
+#[derive(Debug)]
 pub struct SymbolTable {
     pub entries: Vec<Entrie>,
 }

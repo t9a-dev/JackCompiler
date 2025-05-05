@@ -12,6 +12,8 @@ strum_macros.workspace = true
 jack_tokenizer.workspace = true
 symbol_table.workspace = true
 vm_writer.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true

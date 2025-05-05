@@ -1,0 +1,1 @@
+- [ ] termがkeywordConstantの場合の処理を実装する
