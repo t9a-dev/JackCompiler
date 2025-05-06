@@ -829,7 +829,7 @@ impl CompilationEngine {
                             self.find_symbol_index(&expression.term)?.try_into()?,
                         )?;
                     }
-                    Category::Var => {
+                    Category::Var | Category::Arg => {
                         self.vm_writer.write_push(
                             Segment::from(self.find_symbol_kind(&expression.term).unwrap()),
                             self.find_symbol_index(&expression.term)?.try_into()?,

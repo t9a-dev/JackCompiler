@@ -1,4 +1,4 @@
 - [x] termがkeywordConstantの場合の処理を実装する
 - [ ] refactor:Enumで名称が同じものが散在しているのでまとめたほうが良いのか、fromトレイトを実装して変換するのかなどを検討する
-- [ ] 引数(Arg)のVMコード生成
+- [x] 引数(Arg)のVMコード生成
 - [ ] 関数のreturn直前で戻り値をpushするコードの生成
