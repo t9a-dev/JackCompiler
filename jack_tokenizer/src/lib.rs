@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use regex::Regex;
 use std::{
     io::{BufReader, Read},
@@ -137,12 +137,11 @@ impl JackTokenizer {
     }
 
     pub fn int_val(&self) -> Result<u16> {
-        Ok(self
-            .current_token
+        self.current_token
             .clone()
             .unwrap()
             .parse::<u16>()
-            .expect("int_val parse failed"))
+            .context("int_val parse failed")
     }
 
     pub fn string_val(&self) -> Result<String> {

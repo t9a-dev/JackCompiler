@@ -1,8 +1,9 @@
-use anyhow::{anyhow, Ok, Result};
+use anyhow::{anyhow, Context, Result};
 use jack_tokenizer::{JackTokenizer, KeyWord, TokenType};
 use std::{
     env::var,
     io::Write,
+    mem,
     str::FromStr,
     sync::{Arc, Mutex},
 };
@@ -19,6 +20,7 @@ pub enum Category {
     Var,
     Arg,
     Let,
+    This,
     Label,
     Goto,
     IfGoto,
@@ -122,7 +124,7 @@ impl CompilationEngine {
 
             let symbol_entrie_kind = self
                 .process_token("static")
-                .or_else(|_| Ok(self.process_token("field")?))?;
+                .or_else(|_| self.process_token("field"))?;
             // type -> "int"|"char"|"boolean"|className
             let symbol_entrie_type = self.process_type()?;
             self.class_symbol_table.define(
@@ -170,32 +172,73 @@ impl CompilationEngine {
         // "constructor"|"function"|"method"
         if self.tokenizer.token_type()? == TokenType::KeyWord
             && matches!(
-                self.tokenizer.keyword()?.as_ref().to_lowercase().as_str(),
-                "constructor" | "function" | "method"
+                self.tokenizer.keyword()?,
+                KeyWord::Constructor | KeyWord::Function | KeyWord::Method
             )
         {
             let tag_name = "subroutineDec";
             self.write_start_xml_tag(tag_name)?;
 
-            let is_method = self.process_token("constructor").or_else(|_| {
-                self.process_token("function")
-                    .or_else(|_| Ok(self.process_token("method")?))
-            })? == "method";
+            let token_keyword_type =
+                KeyWord::from_str(&self.process_token("constructor").or_else(|_| {
+                    self.process_token("function")
+                        .or_else(|_| self.process_token("method"))
+                })?)?;
             // "void"|type
-            let return_type = self
-                .process_token("void")
-                .or_else(|_| Ok(self.process_type()?))?;
+            let return_type = &self
+                .process_token(&KeyWord::Void.as_ref().to_lowercase())
+                .or_else(|_| self.process_type())?;
             let subroutine_name =
                 self.process_identifier(Category::Subroutine(0), Usage::Declare)?;
             self.subroutine_symbol_table.reset(); //　仕様によりサブルーチンコンパイル開始時に初期化する
-                                                  // 仕様によりメソッドの場合はthisをシンボルテーブルに追加する
-            if is_method {
-                self.subroutine_symbol_table
-                    .define("this", &subroutine_name, Kind::Arg);
+            match token_keyword_type {
+                KeyWord::Method => {
+                    // 仕様によりメソッドの場合はthisをシンボルテーブルに追加する
+                    self.subroutine_symbol_table
+                        .define("this", &subroutine_name, Kind::Arg);
+                }
+                KeyWord::Constructor => {
+                    let n_fields = self.class_symbol_table.var_count(Kind::Field);
+                    let constructor_init_expression = ExpressionNode::new(
+                        &n_fields.to_string(),
+                        Usage::Use,
+                        Some(Category::IntConst),
+                        None,
+                    );
+                    let memory_alloc_expression = ExpressionNode::new(
+                        "Memory.alloc",
+                        Usage::Use,
+                        Some(Category::Subroutine(1)),
+                        None,
+                    );
+                    let this_segment_init_expression =
+                        ExpressionNode::new("0", Usage::Declare, Some(Category::This), None);
+                    self.add_expression(constructor_init_expression)?;
+                    self.add_expression(memory_alloc_expression)?;
+                    self.add_expression(this_segment_init_expression)?;
+                }
+                _ => (),
             }
             self.process_token("(")?;
             self.compile_parameter_list()?;
             self.process_token(")")?;
+            match token_keyword_type {
+                KeyWord::Method => {
+                    debug!("{:#?}", self.subroutine_symbol_table);
+                    let get_this_symbol_expression =
+                        ExpressionNode::new("this", Usage::Use, Some(Category::Arg), None);
+                    let this_segment_init_expression =
+                        ExpressionNode::new("0", Usage::Declare, Some(Category::This), None);
+                    self.add_expression(get_this_symbol_expression)?;
+                    self.add_expression(this_segment_init_expression)?;
+                }
+                KeyWord::Constructor => {
+                    let this_segment_return_expression =
+                        ExpressionNode::new("0", Usage::Use, Some(Category::This), None);
+                    self.add_expression(this_segment_return_expression)?;
+                }
+                _ => (),
+            }
             self.compile_subroutine_body(&subroutine_name)?;
             // 関数の戻り値がvoidである場合は常に0を返す(return直前にスタックに0をpushする)
             if return_type == "void" {
@@ -501,7 +544,7 @@ impl CompilationEngine {
                 category: None,
                 arithmetic_cmd: Some(
                     ArithmeticCommand::from_str(&symbol)
-                        .expect(&format!("strum from_str not found: {:?}", symbol)),
+                        .context(format!("strum from_str not found: {:?}", symbol))?,
                 ),
             };
             self.add_expression(expression_node)?;
@@ -520,13 +563,21 @@ impl CompilationEngine {
                 let keyword_constant_val = match self.tokenizer.keyword()? {
                     KeyWord::True => Some("1"),
                     KeyWord::False | KeyWord::Null => Some("0"),
+                    KeyWord::This => Some("this"),
                     _ => None,
                 };
                 self.process_token(self.tokenizer.keyword()?.as_ref().to_lowercase().as_str())?;
 
                 if let Some(term) = keyword_constant_val {
-                    let expression =
-                        ExpressionNode::new(&term, Usage::Use, Some(Category::KeyWordConst), None);
+                    let expression = match term {
+                        "this" => ExpressionNode::new("0", Usage::Use, Some(Category::This), None),
+                        _ => ExpressionNode::new(
+                            &term,
+                            Usage::Use,
+                            Some(Category::KeyWordConst),
+                            None,
+                        ),
+                    };
                     self.add_expression(expression)?;
                 }
             }
@@ -541,7 +592,7 @@ impl CompilationEngine {
                     let arithmetic_cmd = match symbol.as_str() {
                         "-" => ArithmeticCommand::Neg,
                         _ => ArithmeticCommand::from_str(&symbol)
-                            .expect(&format!("strum from_str err: {:?}", symbol)),
+                            .context(format!("strum from_str err: {:?}", symbol))?,
                     };
                     let expression_node = ExpressionNode {
                         term: self.process_token(&symbol)?,
@@ -718,7 +769,7 @@ impl CompilationEngine {
         Ok(self.process_token("int").or_else(|_| {
             self.process_token("char").or_else(|_| {
                 self.process_token("boolean")
-                    .or_else(|_| Ok(self.process_identifier(Category::Class(0), Usage::Use)?))
+                    .or_else(|_| self.process_identifier(Category::Class(0), Usage::Use))
             })
         })?)
     }
@@ -793,7 +844,7 @@ impl CompilationEngine {
         match self
             .class_symbol_table
             .index_of(name)
-            .or_else(|_| Ok(self.subroutine_symbol_table.index_of(name)?))
+            .or_else(|_| self.subroutine_symbol_table.index_of(name))
         {
             Result::Ok(index) => {
                 self.write(&format!(
@@ -820,13 +871,22 @@ impl CompilationEngine {
                     Category::IntConst => self
                         .vm_writer
                         .write_push(Segment::Constant, expression.term.parse::<i16>()?)?,
-                    Category::KeyWordConst => {
-                        self.vm_writer
-                            .write_push(Segment::Constant, expression.term.parse::<i16>()?)?;
-                        if &expression.term == "1" {
-                            self.vm_writer.write_arithmetic(ArithmeticCommand::Neg)?;
+                    Category::KeyWordConst => match expression.term.parse::<i16>() {
+                        Ok(int_constant) => {
+                            self.vm_writer.write_push(Segment::Constant, int_constant)?;
+                            if int_constant == 1 {
+                                self.vm_writer.write_arithmetic(ArithmeticCommand::Neg)?;
+                            }
                         }
-                    }
+                        Err(_) => {
+                            self.vm_writer.write_push(
+                                Segment::from(self.find_symbol_kind(&expression.term).context(
+                                    format!("line:{}:error expression:{:#?}", line!(), expression),
+                                )?),
+                                self.find_symbol_index(&expression.term)?.try_into()?,
+                            )?;
+                        }
+                    },
                     Category::Class(n_args) | Category::Subroutine(n_args) => {
                         self.vm_writer.write_call(&expression.term, *n_args)?
                     }
@@ -836,12 +896,34 @@ impl CompilationEngine {
                             self.find_symbol_index(&expression.term)?.try_into()?,
                         )?;
                     }
-                    Category::Var | Category::Arg => {
+                    Category::Var => {
                         self.vm_writer.write_push(
                             Segment::from(self.find_symbol_kind(&expression.term).unwrap()),
                             self.find_symbol_index(&expression.term)?.try_into()?,
                         )?;
                     }
+                    Category::Arg => match expression.usage {
+                        Usage::Declare => {
+                            self.vm_writer.write_pop(
+                                Segment::from(self.find_symbol_kind(&expression.term).unwrap()),
+                                self.find_symbol_index(&expression.term)?.try_into()?,
+                            )?;
+                        }
+                        Usage::Use => {
+                            self.vm_writer.write_push(
+                                Segment::from(self.find_symbol_kind(&expression.term).unwrap()),
+                                self.find_symbol_index(&expression.term)?.try_into()?,
+                            )?;
+                        }
+                    },
+                    Category::This => match expression.usage {
+                        Usage::Declare => {
+                            self.vm_writer.write_pop(Segment::Pointer, 0)?;
+                        }
+                        Usage::Use => {
+                            self.vm_writer.write_push(Segment::Pointer, 0)?;
+                        }
+                    },
                     Category::Label => {
                         self.vm_writer
                             .write_label(&expression.term.to_uppercase())?;

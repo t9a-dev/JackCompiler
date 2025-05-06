@@ -43,7 +43,7 @@ impl SymbolTable {
         });
     }
 
-    fn var_count(&self, kind: Kind) -> u16 {
+    pub fn var_count(&self, kind: Kind) -> u16 {
         self.entries
             .iter()
             .filter(|entrie| entrie.kind == kind)

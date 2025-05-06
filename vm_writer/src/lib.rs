@@ -6,7 +6,7 @@ use std::{
 use strum_macros::{AsRefStr, EnumString};
 use symbol_table::Kind;
 
-#[derive(Debug, AsRefStr, EnumString)]
+#[derive(Debug, Clone, PartialEq, AsRefStr, EnumString)]
 #[strum(ascii_case_insensitive)]
 pub enum Segment {
     Constant,

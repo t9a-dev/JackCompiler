@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use compilation_engine::CompilationEngine;
 use jack_tokenizer::JackTokenizer;
 use symbol_table::SymbolTable;
@@ -76,7 +76,7 @@ fn jack_compiler(path_str: &str) -> Result<()> {
             let xml_output_file = Arc::new(Mutex::new(File::create(&xml_output_file_path)?));
             let vm_output_file = Arc::new(Mutex::new(File::create(&vm_output_file_path)?));
             let tokenizer = JackTokenizer::new(File::open(jack_file)?)
-                .expect(&format!("jack_toknizer initialize failed: {:?}", jack_file));
+                .context(format!("jack_toknizer initialize failed: {:?}", jack_file))?;
             let class_symbol_table = SymbolTable::new();
             let subroutine_symbol_table = SymbolTable::new();
             let mut compilation_engine = CompilationEngine::new(
@@ -110,7 +110,7 @@ mod tests {
     use super::*;
 
     const TEST_DIR: &str = "target/test/data";
-    const TEST_JACK_DIR: &str = "test_files/11/ConvertToBin";
+    const TEST_JACK_DIR: &str = "test_files/11/Square";
 
     fn setup_tracing() {
         static INIT: std::sync::Once = std::sync::Once::new();
@@ -211,7 +211,7 @@ mod tests {
             )?;
             compilation_engine
                 .compile_class()
-                .expect(&format!("compilation file: {:?}", jack_file_path));
+                .context(format!("compilation file: {:?}", jack_file_path))?;
             let output = output.lock().unwrap();
             let _actual = String::from_utf8_lossy(output.get_ref());
 
