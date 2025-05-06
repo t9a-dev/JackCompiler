@@ -198,7 +198,7 @@ impl CompilationEngine {
             self.process_token(")")?;
             self.compile_subroutine_body(&subroutine_name)?;
             // 関数の戻り値がvoidである場合は常に0を返す(return直前にスタックに0をpushする)
-            if (return_type == "void") {
+            if return_type == "void" {
                 let return_void_expression =
                     ExpressionNode::new("0", Usage::Use, Some(Category::IntConst), None);
                 self.add_expression(return_void_expression)?;
