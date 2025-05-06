@@ -372,13 +372,29 @@ impl CompilationEngine {
         let tag_name = "ifStatement";
         self.write_start_xml_tag(tag_name)?;
 
-        self.process_token("if")?;
+        let label_name = self.process_token("if")?;
+        let if_start_label = self.create_label(&label_name);
+        self.increment_label_sequence();
         self.process_token("(")?;
         self.compile_expression()?;
+        let not_expression =
+            ExpressionNode::new("not", Usage::Use, None, Some(ArithmeticCommand::Not));
+        self.add_expression(not_expression)?;
+        let if_goto_if_start_expression =
+            ExpressionNode::new(&if_start_label, Usage::Use, Some(Category::IfGoto), None);
+        self.add_expression(if_goto_if_start_expression)?;
         self.process_token(")")?;
         self.process_token("{")?;
         self.compile_statements()?;
+        let if_end_label = self.create_label(&label_name);
+        self.increment_label_sequence();
+        let goto_if_end_label_expression =
+            ExpressionNode::new(&if_end_label, Usage::Use, Some(Category::Goto), None);
+        self.add_expression(goto_if_end_label_expression)?;
         self.process_token("}")?;
+        let label_if_start_expression =
+            ExpressionNode::new(&if_start_label, Usage::Use, Some(Category::Label), None);
+        self.add_expression(label_if_start_expression)?;
         if self.tokenizer.token_type()? == TokenType::KeyWord
             && self.tokenizer.keyword()? == KeyWord::Else
         {
@@ -387,6 +403,9 @@ impl CompilationEngine {
             self.compile_statements()?;
             self.process_token("}")?;
         }
+        let label_if_end_expression =
+            ExpressionNode::new(&if_end_label, Usage::Use, Some(Category::Label), None);
+        self.add_expression(label_if_end_expression)?;
 
         self.write_end_xml_tag(tag_name)?;
         Ok(())
@@ -421,9 +440,9 @@ impl CompilationEngine {
         let goto_while_start_label_expression =
             ExpressionNode::new(&while_start_label, Usage::Use, Some(Category::Goto), None);
         self.add_expression(goto_while_start_label_expression)?;
-        let while_end_label_expression =
+        let label_while_end_expression =
             ExpressionNode::new(&while_end_label, Usage::Use, Some(Category::Label), None);
-        self.add_expression(while_end_label_expression)?;
+        self.add_expression(label_while_end_expression)?;
         self.increment_label_sequence();
         self.process_token("}")?;
 
