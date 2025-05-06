@@ -182,7 +182,8 @@ impl CompilationEngine {
                     .or_else(|_| Ok(self.process_token("method")?))
             })? == "method";
             // "void"|type
-            self.process_token("void")
+            let return_type = self
+                .process_token("void")
                 .or_else(|_| Ok(self.process_type()?))?;
             let subroutine_name =
                 self.process_identifier(Category::Subroutine(0), Usage::Declare)?;
@@ -196,6 +197,12 @@ impl CompilationEngine {
             self.compile_parameter_list()?;
             self.process_token(")")?;
             self.compile_subroutine_body(&subroutine_name)?;
+            // 関数の戻り値がvoidである場合は常に0を返す(return直前にスタックに0をpushする)
+            if (return_type == "void") {
+                let return_void_expression =
+                    ExpressionNode::new("0", Usage::Use, Some(Category::IntConst), None);
+                self.add_expression(return_void_expression)?;
+            }
 
             self.write_end_xml_tag(tag_name)?;
             self.write_expressions_vm_code()?;
