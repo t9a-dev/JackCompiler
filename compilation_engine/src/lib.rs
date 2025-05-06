@@ -510,14 +510,14 @@ impl CompilationEngine {
 
         match self.tokenizer.token_type()? {
             TokenType::KeyWord => {
-                let boolean_str_val = match self.tokenizer.keyword()? {
-                    KeyWord::True => Some("-1"),
-                    KeyWord::False => Some("0"),
+                let keyword_constant_val = match self.tokenizer.keyword()? {
+                    KeyWord::True => Some("1"),
+                    KeyWord::False | KeyWord::Null => Some("0"),
                     _ => None,
                 };
                 self.process_token(self.tokenizer.keyword()?.as_ref().to_lowercase().as_str())?;
 
-                if let Some(term) = boolean_str_val {
+                if let Some(term) = keyword_constant_val {
                     let expression =
                         ExpressionNode::new(&term, Usage::Use, Some(Category::KeyWordConst), None);
                     self.add_expression(expression)?;
@@ -810,9 +810,16 @@ impl CompilationEngine {
         while let Some(expression) = expressions.next() {
             match &expression.category {
                 Some(category) => match category {
-                    Category::IntConst | Category::KeyWordConst => self
+                    Category::IntConst => self
                         .vm_writer
                         .write_push(Segment::Constant, expression.term.parse::<i16>()?)?,
+                    Category::KeyWordConst => {
+                        self.vm_writer
+                            .write_push(Segment::Constant, expression.term.parse::<i16>()?)?;
+                        if &expression.term == "1" {
+                            self.vm_writer.write_arithmetic(ArithmeticCommand::Neg)?;
+                        }
+                    }
                     Category::Class(n_args) | Category::Subroutine(n_args) => {
                         self.vm_writer.write_call(&expression.term, *n_args)?
                     }
