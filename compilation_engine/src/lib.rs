@@ -374,7 +374,6 @@ impl CompilationEngine {
 
         let label_name = self.process_token("if")?;
         let if_start_label = self.create_label(&label_name);
-        self.increment_label_sequence();
         self.process_token("(")?;
         self.compile_expression()?;
         let not_expression =
@@ -387,7 +386,6 @@ impl CompilationEngine {
         self.process_token("{")?;
         self.compile_statements()?;
         let if_end_label = self.create_label(&label_name);
-        self.increment_label_sequence();
         let goto_if_end_label_expression =
             ExpressionNode::new(&if_end_label, Usage::Use, Some(Category::Goto), None);
         self.add_expression(goto_if_end_label_expression)?;
@@ -429,7 +427,6 @@ impl CompilationEngine {
         let not_expression =
             ExpressionNode::new("not", Usage::Use, None, Some(ArithmeticCommand::Not));
         self.add_expression(not_expression)?;
-        self.increment_label_sequence();
         let while_end_label = self.create_label(&label_name);
         let if_goto_while_end_expression =
             ExpressionNode::new(&while_end_label, Usage::Use, Some(Category::IfGoto), None);
@@ -443,7 +440,6 @@ impl CompilationEngine {
         let label_while_end_expression =
             ExpressionNode::new(&while_end_label, Usage::Use, Some(Category::Label), None);
         self.add_expression(label_while_end_expression)?;
-        self.increment_label_sequence();
         self.process_token("}")?;
 
         self.write_end_xml_tag(tag_name)?;
@@ -756,12 +752,10 @@ impl CompilationEngine {
             .or_else(|_| Ok(self.class_symbol_table.index_of(name)?))
     }
 
-    fn create_label(&self, name: &str) -> String {
-        format!("{name}{}", self.label_sequence)
-    }
-
-    fn increment_label_sequence(&mut self) {
+    fn create_label(&mut self, name: &str) -> String {
+        let label = format!("{name}{}", self.label_sequence);
         self.label_sequence += 1;
+        label
     }
 
     fn clear_expressions(&mut self) {
