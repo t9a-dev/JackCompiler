@@ -118,10 +118,6 @@ impl VMWriter {
         Ok(())
     }
 
-    pub fn write_ln(&mut self) {
-        self.write_code("\n").unwrap();
-    }
-
     fn write_code(&mut self, content: &str) -> Result<()> {
         self.writer.lock().unwrap().write(content.as_bytes())?;
         Ok(())

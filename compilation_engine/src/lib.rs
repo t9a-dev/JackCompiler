@@ -17,8 +17,11 @@ pub enum Category {
     Field,
     Static,
     Var,
-    Let,
     Arg,
+    Let,
+    Label,
+    Goto,
+    IfGoto,
     Class(u16),
     Subroutine(u16),
     IntConst,
@@ -64,6 +67,7 @@ pub struct CompilationEngine {
     subroutine_symbol_table: SymbolTable,
     pub expressions: Vec<ExpressionNode>,
     class_name: Option<String>,
+    label_sequence: u16,
 }
 
 impl CompilationEngine {
@@ -82,6 +86,7 @@ impl CompilationEngine {
             subroutine_symbol_table,
             expressions: Vec::new(),
             class_name: None,
+            label_sequence: 1,
         })
     }
 
@@ -391,12 +396,35 @@ impl CompilationEngine {
         let tag_name = "whileStatement";
         self.write_start_xml_tag(tag_name)?;
 
-        self.process_token("while")?;
+        let label_name = self.process_token("while")?;
+        let while_start_label = self.create_label(&label_name);
+        let while_start_label_expression = ExpressionNode::new(
+            &while_start_label,
+            Usage::Declare,
+            Some(Category::Label),
+            None,
+        );
+        self.add_expression(while_start_label_expression)?;
         self.process_token("(")?;
         self.compile_expression()?;
+        let not_expression =
+            ExpressionNode::new("not", Usage::Use, None, Some(ArithmeticCommand::Not));
+        self.add_expression(not_expression)?;
+        self.increment_label_sequence();
+        let while_end_label = self.create_label(&label_name);
+        let if_goto_while_end_expression =
+            ExpressionNode::new(&while_end_label, Usage::Use, Some(Category::IfGoto), None);
+        self.add_expression(if_goto_while_end_expression)?;
         self.process_token(")")?;
         self.process_token("{")?;
         self.compile_statements()?;
+        let goto_while_start_label_expression =
+            ExpressionNode::new(&while_start_label, Usage::Use, Some(Category::Goto), None);
+        self.add_expression(goto_while_start_label_expression)?;
+        let while_end_label_expression =
+            ExpressionNode::new(&while_end_label, Usage::Use, Some(Category::Label), None);
+        self.add_expression(while_end_label_expression)?;
+        self.increment_label_sequence();
         self.process_token("}")?;
 
         self.write_end_xml_tag(tag_name)?;
@@ -709,6 +737,14 @@ impl CompilationEngine {
             .or_else(|_| Ok(self.class_symbol_table.index_of(name)?))
     }
 
+    fn create_label(&self, name: &str) -> String {
+        format!("{name}{}", self.label_sequence)
+    }
+
+    fn increment_label_sequence(&mut self) {
+        self.label_sequence += 1;
+    }
+
     fn clear_expressions(&mut self) {
         debug!("{:#?}", self.expressions);
         self.expressions.clear();
@@ -778,6 +814,16 @@ impl CompilationEngine {
                             Segment::from(self.find_symbol_kind(&expression.term).unwrap()),
                             self.find_symbol_index(&expression.term)?.try_into()?,
                         )?;
+                    }
+                    Category::Label => {
+                        self.vm_writer
+                            .write_label(&expression.term.to_uppercase())?;
+                    }
+                    Category::Goto => {
+                        self.vm_writer.write_goto(&expression.term.to_uppercase())?;
+                    }
+                    Category::IfGoto => {
+                        self.vm_writer.write_if(&expression.term.to_uppercase())?;
                     }
                     Category::StringConst => todo!(),
                     _ => (),
