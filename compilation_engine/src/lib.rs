@@ -195,7 +195,7 @@ impl CompilationEngine {
                 KeyWord::Method => {
                     // 仕様によりメソッドの場合はthisをシンボルテーブルに追加する
                     self.subroutine_symbol_table
-                        .define("this", &subroutine_name, Kind::Arg);
+                        .define("this", &self.class_name.clone().unwrap(), Kind::Arg);
                 }
                 KeyWord::Constructor => {
                     let n_fields = self.class_symbol_table.var_count(Kind::Field);
@@ -224,7 +224,6 @@ impl CompilationEngine {
             self.process_token(")")?;
             match token_keyword_type {
                 KeyWord::Method => {
-                    // debug!("{:#?}", self.subroutine_symbol_table);
                     let get_this_symbol_expression =
                         ExpressionNode::new("this", Usage::Use, Some(Category::Arg), None);
                     let this_segment_init_expression =
@@ -313,7 +312,8 @@ impl CompilationEngine {
         {
             n_vars = n_vars + self.compile_var_dec()?;
         }
-        // debug!("{:#?}", self.subroutine_symbol_table);
+        debug!("class_scope: {:#?}", self.class_symbol_table);
+        debug!("subroutine_scope: {:#?}", self.subroutine_symbol_table);
         self.vm_writer.write_function(
             &format!(
                 "{}.{}",
@@ -625,8 +625,21 @@ impl CompilationEngine {
                         }
                         "(" => {
                             self.process_token("(")?;
-                            self.compile_expression_list()?;
+                            let n_args = self.compile_expression_list()? + 1;
                             self.process_token(")")?;
+                            // methodなのでthisをスタックへプッシュ
+                            self.add_expression(ExpressionNode {
+                                term: "".to_string(),
+                                usage: Usage::Use,
+                                category: Some(Category::This),
+                                arithmetic_cmd: None,
+                            })?;
+                            self.add_expression(ExpressionNode::new(
+                                &format!("{}.{}",self.class_name.clone().unwrap(),&identifier_name),
+                                Usage::Use,
+                                Some(Category::Subroutine(n_args)),
+                                None,
+                            ))?;
                         }
                         "." => {
                             self.process_token(".")?;
