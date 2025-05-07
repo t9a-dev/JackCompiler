@@ -224,18 +224,13 @@ impl CompilationEngine {
             self.process_token(")")?;
             match token_keyword_type {
                 KeyWord::Method => {
-                    debug!("{:#?}", self.subroutine_symbol_table);
+                    // debug!("{:#?}", self.subroutine_symbol_table);
                     let get_this_symbol_expression =
                         ExpressionNode::new("this", Usage::Use, Some(Category::Arg), None);
                     let this_segment_init_expression =
                         ExpressionNode::new("0", Usage::Declare, Some(Category::This), None);
                     self.add_expression(get_this_symbol_expression)?;
                     self.add_expression(this_segment_init_expression)?;
-                }
-                KeyWord::Constructor => {
-                    let this_segment_return_expression =
-                        ExpressionNode::new("0", Usage::Use, Some(Category::This), None);
-                    self.add_expression(this_segment_return_expression)?;
                 }
                 _ => (),
             }
@@ -318,7 +313,7 @@ impl CompilationEngine {
         {
             n_vars = n_vars + self.compile_var_dec()?;
         }
-        debug!("{:#?}", self.subroutine_symbol_table);
+        // debug!("{:#?}", self.subroutine_symbol_table);
         self.vm_writer.write_function(
             &format!(
                 "{}.{}",
@@ -635,14 +630,49 @@ impl CompilationEngine {
                         }
                         "." => {
                             self.process_token(".")?;
-                            let identifier_name = identifier_name
-                                + "."
-                                + self
-                                    .process_identifier(Category::Subroutine(0), Usage::Use)?
-                                    .as_str();
-                            self.process_token("(")?;
-                            let n_args = self.compile_expression_list()?;
-                            self.process_token(")")?;
+                            // symbol_tableにidentifier_nameが存在すればクラスのインスタンスオブジェクト
+                            let (identifier_name, n_args) = match self
+                                .find_symbol_index(&identifier_name)
+                            {
+                                Ok(_) => {
+                                    // インスタンスの参照をスタックへプッシュして、メソッド呼び出しのためにcall type.methodを実行
+                                    let filed_symbol_name = &identifier_name;
+                                    let symbol_type = self.find_symbol_type(&identifier_name)?;
+                                    let identifier_name = symbol_type
+                                        + "."
+                                        + self
+                                            .process_identifier(
+                                                Category::Subroutine(0),
+                                                Usage::Use,
+                                            )?
+                                            .as_str();
+                                    self.process_token("(")?;
+                                    let n_args = self.compile_expression_list()? + 1;
+                                    self.process_token(")")?;
+                                    let push_instance_reference_expression = ExpressionNode::new(
+                                        &filed_symbol_name,
+                                        Usage::Use,
+                                        Some(Category::Field),
+                                        None,
+                                    );
+                                    self.add_expression(push_instance_reference_expression)?;
+                                    (identifier_name, n_args)
+                                }
+                                Err(_) => {
+                                    let identifier_name = identifier_name
+                                        + "."
+                                        + self
+                                            .process_identifier(
+                                                Category::Subroutine(0),
+                                                Usage::Use,
+                                            )?
+                                            .as_str();
+                                    self.process_token("(")?;
+                                    let n_args = self.compile_expression_list()?;
+                                    self.process_token(")")?;
+                                    (identifier_name, n_args)
+                                }
+                            };
                             self.add_expression(ExpressionNode::new(
                                 &identifier_name,
                                 Usage::Use,
@@ -817,7 +847,7 @@ impl CompilationEngine {
     }
 
     fn clear_expressions(&mut self) {
-        debug!("{:#?}", self.expressions);
+        // debug!("{:#?}", self.expressions);
         self.expressions.clear();
     }
 
@@ -902,7 +932,7 @@ impl CompilationEngine {
                             self.find_symbol_index(&expression.term)?.try_into()?,
                         )?;
                     }
-                    Category::Arg => match expression.usage {
+                    Category::Arg | Category::Field => match expression.usage {
                         Usage::Declare => {
                             self.vm_writer.write_pop(
                                 Segment::from(self.find_symbol_kind(&expression.term).unwrap()),
@@ -911,7 +941,9 @@ impl CompilationEngine {
                         }
                         Usage::Use => {
                             self.vm_writer.write_push(
-                                Segment::from(self.find_symbol_kind(&expression.term).unwrap()),
+                                Segment::from(self.find_symbol_kind(&expression.term).context(
+                                    format!("line:{}:error expression:{:#?}", line!(), expression),
+                                )?),
                                 self.find_symbol_index(&expression.term)?.try_into()?,
                             )?;
                         }
