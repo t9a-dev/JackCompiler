@@ -20,7 +20,6 @@ pub enum Category {
     Arg,
     Let,
     Pointer,
-    This,
     That,
     Temp,
     Label,
@@ -180,6 +179,7 @@ impl CompilationEngine {
         {
             let tag_name = "subroutineDec";
             self.write_start_xml_tag(tag_name)?;
+            self.subroutine_symbol_table.reset(); //　仕様によりサブルーチンコンパイル開始時に初期化する
 
             let token_keyword_type =
                 KeyWord::from_str(&self.process_token("constructor").or_else(|_| {
@@ -192,7 +192,6 @@ impl CompilationEngine {
                 .or_else(|_| self.process_type())?;
             let subroutine_name =
                 self.process_identifier(Category::Subroutine(0), Usage::Declare)?;
-            self.subroutine_symbol_table.reset(); //　仕様によりサブルーチンコンパイル開始時に初期化する
             match token_keyword_type {
                 KeyWord::Method => {
                     // 仕様によりメソッドの場合はthisをシンボルテーブルに追加する
@@ -238,6 +237,8 @@ impl CompilationEngine {
                 }
                 _ => (),
             }
+            debug!("class_scope: {:#?}", self.class_symbol_table);
+            debug!("subroutine_scope: {:#?}", self.subroutine_symbol_table);
             self.compile_subroutine_body(&subroutine_name)?;
             // 関数の戻り値がvoidである場合は常に0を返す(return直前にスタックに0をpushする)
             if return_type == "void" {
@@ -317,8 +318,6 @@ impl CompilationEngine {
         {
             n_vars = n_vars + self.compile_var_dec()?;
         }
-        debug!("class_scope: {:#?}", self.class_symbol_table);
-        debug!("subroutine_scope: {:#?}", self.subroutine_symbol_table);
         self.vm_writer.write_function(
             &format!(
                 "{}.{}",
@@ -591,16 +590,15 @@ impl CompilationEngine {
             let symbol = self.tokenizer.symbol()?;
             let term = self.process_token(&symbol)?;
             self.compile_term()?;
-            let expression_node = ExpressionNode {
-                term: term,
-                usage: Usage::Use,
-                category: None,
-                arithmetic_cmd: Some(
+            self.add_expression(ExpressionNode::new(
+                &term,
+                Usage::Use,
+                None,
+                Some(
                     ArithmeticCommand::from_str(&symbol)
                         .context(format!("strum from_str not found: {:?}", symbol))?,
                 ),
-            };
-            self.add_expression(expression_node)?;
+            ))?;
         }
 
         self.write_end_xml_tag(tag_name)?;
@@ -613,26 +611,22 @@ impl CompilationEngine {
 
         match self.tokenizer.token_type()? {
             TokenType::KeyWord => {
-                let keyword_constant_val = match self.tokenizer.keyword()? {
+                let term = match self.tokenizer.keyword()? {
                     KeyWord::True => Some("1"),
                     KeyWord::False | KeyWord::Null => Some("0"),
-                    KeyWord::This => Some("this"),
                     _ => None,
-                };
-                self.process_token(self.tokenizer.keyword()?.as_ref().to_lowercase().as_str())?;
-
-                if let Some(term) = keyword_constant_val {
-                    let expression = match term {
-                        "this" => ExpressionNode::new("0", Usage::Use, Some(Category::This), None),
-                        _ => ExpressionNode::new(
-                            &term,
-                            Usage::Use,
-                            Some(Category::KeyWordConst),
-                            None,
-                        ),
-                    };
-                    self.add_expression(expression)?;
                 }
+                .context(format!(
+                    "compile_term keyword error keyword is None: {:#?}",
+                    self.tokenizer.keyword()?
+                ))?;
+                self.process_token(self.tokenizer.keyword()?.as_ref().to_lowercase().as_str())?;
+                self.add_expression(ExpressionNode::new(
+                    &term,
+                    Usage::Use,
+                    Some(Category::KeyWordConst),
+                    None,
+                ))?;
             }
             TokenType::Symbol => {
                 let symbol = self.tokenizer.symbol()?;
@@ -674,6 +668,7 @@ impl CompilationEngine {
                     };
                 let identifier_name =
                     self.process_identifier(identifier_category.clone(), Usage::Use)?;
+
                 if self.tokenizer.token_type()? == TokenType::Symbol {
                     match self.tokenizer.symbol()?.as_str() {
                         "[" => {
@@ -697,13 +692,13 @@ impl CompilationEngine {
                             self.process_token("(")?;
                             let n_args = self.compile_expression_list()? + 1;
                             self.process_token(")")?;
-                            // methodなのでthisをスタックへプッシュ
-                            self.add_expression(ExpressionNode {
-                                term: "".to_string(),
-                                usage: Usage::Use,
-                                category: Some(Category::This),
-                                arithmetic_cmd: None,
-                            })?;
+                            // methodなのでthis(pointer 0)をスタックへプッシュ
+                            self.add_expression(ExpressionNode::new(
+                                "0",
+                                Usage::Use,
+                                Some(Category::Pointer),
+                                None,
+                            ))?;
                             self.add_expression(ExpressionNode::new(
                                 &format!(
                                     "{}.{}",
@@ -768,12 +763,21 @@ impl CompilationEngine {
                             ))?;
                         }
                         _ => {
-                            self.add_expression(ExpressionNode::new(
-                                &identifier_name,
-                                Usage::Use,
-                                Some(identifier_category),
-                                None,
-                            ))?;
+                            if identifier_name == "this" {
+                                self.add_expression(ExpressionNode::new(
+                                    "0",
+                                    Usage::Use,
+                                    Some(Category::Pointer),
+                                    None,
+                                ))?;
+                            }else{
+                                self.add_expression(ExpressionNode::new(
+                                    &identifier_name,
+                                    Usage::Use,
+                                    Some(identifier_category),
+                                    None,
+                                ))?;
+                            }
                         }
                     }
                 }
@@ -895,7 +899,7 @@ impl CompilationEngine {
         match self.tokenizer.token_type()? {
             TokenType::KeyWord => Ok(matches!(
                 self.tokenizer.keyword()?,
-                KeyWord::True | KeyWord::False | KeyWord::Null | KeyWord::This
+                KeyWord::True | KeyWord::False | KeyWord::Null
             )),
             TokenType::Symbol => Ok(matches!(self.tokenizer.symbol()?.as_str(), "(" | "~" | "-")),
             TokenType::Identifier => Ok(true),
@@ -1037,7 +1041,7 @@ impl CompilationEngine {
                         Usage::Use => {
                             self.vm_writer.write_push(
                                 Segment::from(self.find_symbol_kind(&expression.term).context(
-                                    format!("line:{}:error expression:{:#?}", line!(), expression),
+                                    format!("line:{}:error expression:{:#?},subroutine_symbol_table: {:#?}", line!(), expression,self.subroutine_symbol_table),
                                 )?),
                                 self.find_symbol_index(&expression.term)?.try_into()?,
                             )?;
@@ -1058,21 +1062,6 @@ impl CompilationEngine {
                             }
                         }
                     }
-                    Category::This => {
-                        let index = expression.term.parse::<i16>().context(format!(
-                            "line:{}: parse to u16 failed term: {:#?} ",
-                            line!(),
-                            expression.term
-                        ))?;
-                        match expression.usage {
-                            Usage::Declare => {
-                                self.vm_writer.write_pop(Segment::This, index)?;
-                            }
-                            Usage::Use => {
-                                self.vm_writer.write_push(Segment::This, index)?;
-                            }
-                        }
-                    }
                     Category::That => {
                         let index = expression.term.parse::<i16>().context(format!(
                             "line:{}: parse to u16 failed term: {:#?} ",
@@ -1081,10 +1070,10 @@ impl CompilationEngine {
                         ))?;
                         match expression.usage {
                             Usage::Declare => {
-                                self.vm_writer.write_pop(Segment::That, index)?;
+                                self.vm_writer.write_pop(Segment::Pointer, index)?;
                             }
                             Usage::Use => {
-                                self.vm_writer.write_push(Segment::That, index)?;
+                                self.vm_writer.write_push(Segment::Pointer, index)?;
                             }
                         }
                     }

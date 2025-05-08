@@ -57,7 +57,6 @@ pub enum KeyWord {
     True,
     False,
     Null,
-    This,
 }
 
 pub struct JackTokenizer {
