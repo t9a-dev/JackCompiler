@@ -110,7 +110,7 @@ mod tests {
     use super::*;
 
     const TEST_DIR: &str = "target/test/data";
-    const TEST_JACK_DIR: &str = "test_files/11/Square";
+    const TEST_JACK_DIR: &str = "test_files/11/Average";
 
     fn setup_tracing() {
         static INIT: std::sync::Once = std::sync::Once::new();

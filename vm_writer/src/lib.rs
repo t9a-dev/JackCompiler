@@ -53,6 +53,8 @@ pub enum ArithmeticCommand {
     Not,
     #[strum(serialize = "*", to_string = "call Math.multiply 2")]
     Multiply,
+    #[strum(serialize = "/", to_string = "call Math.divide 2")]
+    Divide,
 }
 
 pub struct VMWriter {

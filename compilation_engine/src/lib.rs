@@ -1,15 +1,14 @@
 use anyhow::{anyhow, Context, Result};
 use jack_tokenizer::{JackTokenizer, KeyWord, TokenType};
 use std::{
-    env::var,
     io::Write,
-    mem,
+    result::Result::Ok,
     str::FromStr,
     sync::{Arc, Mutex},
 };
 use strum_macros::{AsRefStr, EnumString};
 use symbol_table::{Kind, SymbolTable};
-use tracing::{debug, trace};
+use tracing::debug;
 use vm_writer::{ArithmeticCommand, Segment, VMWriter};
 
 #[derive(Debug, Clone, PartialEq, AsRefStr, EnumString)]
@@ -20,7 +19,10 @@ pub enum Category {
     Var,
     Arg,
     Let,
+    Pointer,
     This,
+    That,
+    Temp,
     Label,
     Goto,
     IfGoto,
@@ -194,8 +196,11 @@ impl CompilationEngine {
             match token_keyword_type {
                 KeyWord::Method => {
                     // 仕様によりメソッドの場合はthisをシンボルテーブルに追加する
-                    self.subroutine_symbol_table
-                        .define("this", &self.class_name.clone().unwrap(), Kind::Arg);
+                    self.subroutine_symbol_table.define(
+                        "this",
+                        &self.class_name.clone().unwrap(),
+                        Kind::Arg,
+                    );
                 }
                 KeyWord::Constructor => {
                     let n_fields = self.class_symbol_table.var_count(Kind::Field);
@@ -212,7 +217,7 @@ impl CompilationEngine {
                         None,
                     );
                     let this_segment_init_expression =
-                        ExpressionNode::new("0", Usage::Declare, Some(Category::This), None);
+                        ExpressionNode::new("0", Usage::Declare, Some(Category::Pointer), None);
                     self.add_expression(constructor_init_expression)?;
                     self.add_expression(memory_alloc_expression)?;
                     self.add_expression(this_segment_init_expression)?;
@@ -227,7 +232,7 @@ impl CompilationEngine {
                     let get_this_symbol_expression =
                         ExpressionNode::new("this", Usage::Use, Some(Category::Arg), None);
                     let this_segment_init_expression =
-                        ExpressionNode::new("0", Usage::Declare, Some(Category::This), None);
+                        ExpressionNode::new("0", Usage::Declare, Some(Category::Pointer), None);
                     self.add_expression(get_this_symbol_expression)?;
                     self.add_expression(this_segment_init_expression)?;
                 }
@@ -391,23 +396,76 @@ impl CompilationEngine {
         self.write_start_xml_tag(tag_name)?;
 
         self.process_token("let")?;
-        let var_name = self.process_identifier(Category::Let, Usage::Declare)?;
-        if self.tokenizer.token_type()? == TokenType::Symbol && self.tokenizer.symbol()? == "[" {
+        let is_array_object = &self
+            .tokenizer
+            .next_token()
+            .context(format!("line:{}: next_token is empty ", line!()))?
+            == "[";
+
+        if is_array_object {
+            let var_name = self.process_identifier(Category::Let, Usage::Declare)?;
+            self.add_expression(ExpressionNode::new(
+                &var_name,
+                Usage::Use,
+                Some(Category::Let),
+                None,
+            ))?;
             self.process_token("[")?;
             self.compile_expression()?;
+            self.add_expression(ExpressionNode::new(
+                "",
+                Usage::Use,
+                None,
+                Some(ArithmeticCommand::Add),
+            ))?;
             self.process_token("]")?;
-        }
-        self.process_token("=")?;
-        self.compile_expression()?;
-        self.process_token(";")?;
+            self.process_token("=")?;
+            self.compile_expression()?;
+            self.add_expression(ExpressionNode::new(
+                "0",
+                Usage::Declare,
+                Some(Category::Temp),
+                None,
+            ))?;
+            self.add_expression(ExpressionNode::new(
+                "1",
+                Usage::Declare,
+                Some(Category::Pointer),
+                None,
+            ))?;
+            self.add_expression(ExpressionNode::new(
+                "0",
+                Usage::Use,
+                Some(Category::Temp),
+                None,
+            ))?;
+            self.add_expression(ExpressionNode::new(
+                "0",
+                Usage::Declare,
+                Some(Category::That),
+                None,
+            ))?;
+            self.process_token(";")?;
+        } else {
+            let var_name = self.process_identifier(Category::Let, Usage::Declare)?;
+            if self.tokenizer.token_type()? == TokenType::Symbol && self.tokenizer.symbol()? == "["
+            {
+                self.process_token("[")?;
+                self.compile_expression()?;
+                self.process_token("]")?;
+            }
+            self.process_token("=")?;
+            self.compile_expression()?;
+            self.process_token(";")?;
 
-        let expression = ExpressionNode {
-            term: var_name.clone(),
-            usage: Usage::Declare,
-            category: Some(Category::Let),
-            arithmetic_cmd: None,
-        };
-        self.add_expression(expression)?;
+            let expression = ExpressionNode {
+                term: var_name.clone(),
+                usage: Usage::Declare,
+                category: Some(Category::Let),
+                arithmetic_cmd: None,
+            };
+            self.add_expression(expression)?;
+        }
 
         self.write_end_xml_tag(tag_name)?;
         Ok(())
@@ -619,6 +677,18 @@ impl CompilationEngine {
                 if self.tokenizer.token_type()? == TokenType::Symbol {
                     match self.tokenizer.symbol()?.as_str() {
                         "[" => {
+                            self.add_expression(ExpressionNode::new(
+                                &identifier_name,
+                                Usage::Use,
+                                Some(identifier_category),
+                                None,
+                            ))?;
+                            self.add_expression(ExpressionNode::new(
+                                "",
+                                Usage::Use,
+                                None,
+                                Some(ArithmeticCommand::Add),
+                            ))?;
                             self.process_token("[")?;
                             self.compile_expression()?;
                             self.process_token("]")?;
@@ -635,7 +705,11 @@ impl CompilationEngine {
                                 arithmetic_cmd: None,
                             })?;
                             self.add_expression(ExpressionNode::new(
-                                &format!("{}.{}",self.class_name.clone().unwrap(),&identifier_name),
+                                &format!(
+                                    "{}.{}",
+                                    self.class_name.clone().unwrap(),
+                                    &identifier_name
+                                ),
                                 Usage::Use,
                                 Some(Category::Subroutine(n_args)),
                                 None,
@@ -933,12 +1007,20 @@ impl CompilationEngine {
                     Category::Class(n_args) | Category::Subroutine(n_args) => {
                         self.vm_writer.write_call(&expression.term, *n_args)?
                     }
-                    Category::Let => {
-                        self.vm_writer.write_pop(
-                            Segment::from(self.find_symbol_kind(&expression.term).unwrap()),
-                            self.find_symbol_index(&expression.term)?.try_into()?,
-                        )?;
-                    }
+                    Category::Let => match expression.usage {
+                        Usage::Declare => {
+                            self.vm_writer.write_pop(
+                                Segment::from(self.find_symbol_kind(&expression.term).unwrap()),
+                                self.find_symbol_index(&expression.term)?.try_into()?,
+                            )?;
+                        }
+                        Usage::Use => {
+                            self.vm_writer.write_push(
+                                Segment::from(self.find_symbol_kind(&expression.term).unwrap()),
+                                self.find_symbol_index(&expression.term)?.try_into()?,
+                            )?;
+                        }
+                    },
                     Category::Var => {
                         self.vm_writer.write_push(
                             Segment::from(self.find_symbol_kind(&expression.term).unwrap()),
@@ -961,14 +1043,66 @@ impl CompilationEngine {
                             )?;
                         }
                     },
-                    Category::This => match expression.usage {
-                        Usage::Declare => {
-                            self.vm_writer.write_pop(Segment::Pointer, 0)?;
+                    Category::Pointer => {
+                        let index = expression.term.parse::<i16>().context(format!(
+                            "line:{}: parse to u16 failed term: {:#?} ",
+                            line!(),
+                            expression.term
+                        ))?;
+                        match expression.usage {
+                            Usage::Declare => {
+                                self.vm_writer.write_pop(Segment::Pointer, index)?;
+                            }
+                            Usage::Use => {
+                                self.vm_writer.write_push(Segment::Pointer, index)?;
+                            }
                         }
-                        Usage::Use => {
-                            self.vm_writer.write_push(Segment::Pointer, 0)?;
+                    }
+                    Category::This => {
+                        let index = expression.term.parse::<i16>().context(format!(
+                            "line:{}: parse to u16 failed term: {:#?} ",
+                            line!(),
+                            expression.term
+                        ))?;
+                        match expression.usage {
+                            Usage::Declare => {
+                                self.vm_writer.write_pop(Segment::This, index)?;
+                            }
+                            Usage::Use => {
+                                self.vm_writer.write_push(Segment::This, index)?;
+                            }
                         }
-                    },
+                    }
+                    Category::That => {
+                        let index = expression.term.parse::<i16>().context(format!(
+                            "line:{}: parse to u16 failed term: {:#?} ",
+                            line!(),
+                            expression.term
+                        ))?;
+                        match expression.usage {
+                            Usage::Declare => {
+                                self.vm_writer.write_pop(Segment::That, index)?;
+                            }
+                            Usage::Use => {
+                                self.vm_writer.write_push(Segment::That, index)?;
+                            }
+                        }
+                    }
+                    Category::Temp => {
+                        let index = expression.term.parse::<i16>().context(format!(
+                            "line:{}: parse to u16 failed term: {:#?} ",
+                            line!(),
+                            expression.term
+                        ))?;
+                        match expression.usage {
+                            Usage::Declare => {
+                                self.vm_writer.write_pop(Segment::Temp, index)?;
+                            }
+                            Usage::Use => {
+                                self.vm_writer.write_push(Segment::Temp, index)?;
+                            }
+                        }
+                    }
                     Category::Label => {
                         self.vm_writer
                             .write_label(&expression.term.to_uppercase())?;
@@ -979,7 +1113,23 @@ impl CompilationEngine {
                     Category::IfGoto => {
                         self.vm_writer.write_if(&expression.term.to_uppercase())?;
                     }
-                    Category::StringConst => todo!(),
+                    Category::StringConst => {
+                        debug!("stringConstExpression:{:#?}", expression);
+                        let string_length = expression.term.len();
+                        // 文字列オブジェクトのインスタンスを生成して参照がスタック先頭にプッシュされる
+                        self.vm_writer
+                            .write_push(Segment::Constant, string_length.try_into()?)?;
+                        self.vm_writer.write_call("String.new", 1)?;
+                        // temp 0セグメントに文字列オブジェクトのインスタンスをpop
+                        self.vm_writer.write_pop(Segment::Temp, 0)?;
+                        expression.term.chars().try_for_each(|char| -> Result<()> {
+                            self.vm_writer.write_push(Segment::Temp, 0)?;
+                            self.vm_writer
+                                .write_push(Segment::Constant, (char as u32).try_into()?)?;
+                            self.vm_writer.write_call("String.appendChar", 2)?;
+                            Ok(())
+                        })?;
+                    }
                     _ => (),
                 },
                 None => match &expression.arithmetic_cmd {
