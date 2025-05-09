@@ -110,7 +110,7 @@ mod tests {
     use super::*;
 
     const TEST_DIR: &str = "target/test/data";
-    const TEST_JACK_DIR: &str = "test_files/11/Average";
+    const TEST_JACK_DIR: &str = "test_files/11/Pong";
 
     fn setup_tracing() {
         static INIT: std::sync::Once = std::sync::Once::new();
@@ -215,9 +215,9 @@ mod tests {
             let output = output.lock().unwrap();
             let _actual = String::from_utf8_lossy(output.get_ref());
 
-            assert_eq!(compilation_engine.expressions, vec![]);
+            // assert_eq!(compilation_engine.expressions, vec![]);
             // assert_eq!(expect, actual);
-            Ok(())
+            Err(anyhow!("debugging"))
         })?;
         Ok(())
     }

@@ -742,15 +742,14 @@ impl CompilationEngine {
                                             )?
                                             .as_str();
                                     self.process_token("(")?;
-                                    let n_args = self.compile_expression_list()? + 1;
-                                    self.process_token(")")?;
-                                    let push_instance_reference_expression = ExpressionNode::new(
+                                    self.add_expression(ExpressionNode::new(
                                         &filed_symbol_name,
                                         Usage::Use,
                                         Some(Category::Field),
                                         None,
-                                    );
-                                    self.add_expression(push_instance_reference_expression)?;
+                                    ))?;
+                                    let n_args = self.compile_expression_list()? + 1;
+                                    self.process_token(")")?;
                                     (identifier_name, n_args)
                                 }
                                 Err(_) => {
@@ -1038,7 +1037,7 @@ impl CompilationEngine {
                             )?;
                         }
                     },
-                    Category::Var | Category::Arg | Category::Field => match expression.usage {
+                    Category::Var | Category::Arg | Category::Field | Category::Static => match expression.usage {
                         Usage::Declare => {
                             self.vm_writer.write_pop(
                                 Segment::from(self.find_symbol_kind(&expression.term).unwrap()),
@@ -1122,7 +1121,6 @@ impl CompilationEngine {
                             Ok(())
                         })?;
                     }
-                    _ => (),
                 },
                 None => match &expression.arithmetic_cmd {
                     Some(cmd) => self.vm_writer.write_arithmetic(cmd.clone())?,
