@@ -237,9 +237,9 @@ impl CompilationEngine {
                 }
                 _ => (),
             }
+            self.compile_subroutine_body(&subroutine_name)?;
             debug!("class_scope: {:#?}", self.class_symbol_table);
             debug!("subroutine_scope: {:#?}", self.subroutine_symbol_table);
-            self.compile_subroutine_body(&subroutine_name)?;
             // 関数の戻り値がvoidである場合は常に0を返す(return直前にスタックに0をpushする)
             if return_type == "void" {
                 let return_void_expression =
@@ -406,7 +406,7 @@ impl CompilationEngine {
             self.add_expression(ExpressionNode::new(
                 &var_name,
                 Usage::Use,
-                Some(Category::Let),
+                Some(Category::Var),
                 None,
             ))?;
             self.process_token("[")?;
@@ -672,20 +672,33 @@ impl CompilationEngine {
                 if self.tokenizer.token_type()? == TokenType::Symbol {
                     match self.tokenizer.symbol()?.as_str() {
                         "[" => {
+                            // a[i]であれば push a push i addとしたい
                             self.add_expression(ExpressionNode::new(
                                 &identifier_name,
                                 Usage::Use,
                                 Some(identifier_category),
                                 None,
                             ))?;
+                            self.process_token("[")?;
+                            self.compile_expression()?;
                             self.add_expression(ExpressionNode::new(
                                 "",
                                 Usage::Use,
                                 None,
                                 Some(ArithmeticCommand::Add),
                             ))?;
-                            self.process_token("[")?;
-                            self.compile_expression()?;
+                            self.add_expression(ExpressionNode::new(
+                                "1",
+                                Usage::Declare,
+                                Some(Category::Pointer),
+                                None,
+                            ))?;
+                            self.add_expression(ExpressionNode::new(
+                                "0",
+                                Usage::Use,
+                                Some(Category::That),
+                                None,
+                            ))?;
                             self.process_token("]")?;
                         }
                         "(" => {
@@ -770,7 +783,7 @@ impl CompilationEngine {
                                     Some(Category::Pointer),
                                     None,
                                 ))?;
-                            }else{
+                            } else {
                                 self.add_expression(ExpressionNode::new(
                                     &identifier_name,
                                     Usage::Use,
@@ -1025,13 +1038,7 @@ impl CompilationEngine {
                             )?;
                         }
                     },
-                    Category::Var => {
-                        self.vm_writer.write_push(
-                            Segment::from(self.find_symbol_kind(&expression.term).unwrap()),
-                            self.find_symbol_index(&expression.term)?.try_into()?,
-                        )?;
-                    }
-                    Category::Arg | Category::Field => match expression.usage {
+                    Category::Var | Category::Arg | Category::Field => match expression.usage {
                         Usage::Declare => {
                             self.vm_writer.write_pop(
                                 Segment::from(self.find_symbol_kind(&expression.term).unwrap()),
@@ -1070,10 +1077,10 @@ impl CompilationEngine {
                         ))?;
                         match expression.usage {
                             Usage::Declare => {
-                                self.vm_writer.write_pop(Segment::Pointer, index)?;
+                                self.vm_writer.write_pop(Segment::That, index)?;
                             }
                             Usage::Use => {
-                                self.vm_writer.write_push(Segment::Pointer, index)?;
+                                self.vm_writer.write_push(Segment::That, index)?;
                             }
                         }
                     }
@@ -1103,16 +1110,12 @@ impl CompilationEngine {
                         self.vm_writer.write_if(&expression.term.to_uppercase())?;
                     }
                     Category::StringConst => {
-                        debug!("stringConstExpression:{:#?}", expression);
                         let string_length = expression.term.len();
                         // 文字列オブジェクトのインスタンスを生成して参照がスタック先頭にプッシュされる
                         self.vm_writer
                             .write_push(Segment::Constant, string_length.try_into()?)?;
                         self.vm_writer.write_call("String.new", 1)?;
-                        // temp 0セグメントに文字列オブジェクトのインスタンスをpop
-                        self.vm_writer.write_pop(Segment::Temp, 0)?;
                         expression.term.chars().try_for_each(|char| -> Result<()> {
-                            self.vm_writer.write_push(Segment::Temp, 0)?;
                             self.vm_writer
                                 .write_push(Segment::Constant, (char as u32).try_into()?)?;
                             self.vm_writer.write_call("String.appendChar", 2)?;
