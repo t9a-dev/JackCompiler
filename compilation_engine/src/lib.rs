@@ -273,9 +273,6 @@ impl CompilationEngine {
         if matches!(
             self.tokenizer.token_type()?,
             TokenType::KeyWord | TokenType::Identifier
-        ) && matches!(
-            self.tokenizer.keyword()?.as_ref().to_lowercase().as_str(),
-            "int" | "char" | "boolean"
         ) {
             let symbol_entrie_kind = Kind::Arg; // サブルーチンのパラメータリストコンパイルなのでArg固定
             let symbol_entrie_type = self.process_type()?;
@@ -1037,22 +1034,24 @@ impl CompilationEngine {
                             )?;
                         }
                     },
-                    Category::Var | Category::Arg | Category::Field | Category::Static => match expression.usage {
-                        Usage::Declare => {
-                            self.vm_writer.write_pop(
-                                Segment::from(self.find_symbol_kind(&expression.term).unwrap()),
-                                self.find_symbol_index(&expression.term)?.try_into()?,
-                            )?;
-                        }
-                        Usage::Use => {
-                            self.vm_writer.write_push(
+                    Category::Var | Category::Arg | Category::Field | Category::Static => {
+                        match expression.usage {
+                            Usage::Declare => {
+                                self.vm_writer.write_pop(
+                                    Segment::from(self.find_symbol_kind(&expression.term).unwrap()),
+                                    self.find_symbol_index(&expression.term)?.try_into()?,
+                                )?;
+                            }
+                            Usage::Use => {
+                                self.vm_writer.write_push(
                                 Segment::from(self.find_symbol_kind(&expression.term).context(
                                     format!("line:{}:error expression:{:#?},subroutine_symbol_table: {:#?}", line!(), expression,self.subroutine_symbol_table),
                                 )?),
                                 self.find_symbol_index(&expression.term)?.try_into()?,
                             )?;
+                            }
                         }
-                    },
+                    }
                     Category::Pointer => {
                         let index = expression.term.parse::<i16>().context(format!(
                             "line:{}: parse to u16 failed term: {:#?} ",
