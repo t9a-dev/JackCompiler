@@ -703,8 +703,6 @@ impl CompilationEngine {
                         }
                         "(" => {
                             self.process_token("(")?;
-                            let n_args = self.compile_expression_list()? + 1;
-                            self.process_token(")")?;
                             // methodなのでthis(pointer 0)をスタックへプッシュ
                             self.add_expression(ExpressionNode::new(
                                 "0",
@@ -712,6 +710,8 @@ impl CompilationEngine {
                                 Some(Category::Pointer),
                                 None,
                             ))?;
+                            let n_args = self.compile_expression_list()? + 1;
+                            self.process_token(")")?;
                             self.add_expression(ExpressionNode::new(
                                 &format!(
                                     "{}.{}",
