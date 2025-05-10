@@ -45,13 +45,11 @@ fn parse_compile_target_path(path: &Path) -> Result<Vec<PathBuf>> {
                 }
             }
         }
-    } else {
-        if let Some(extension) = path.extension() {
-            if extension == JACK_FILE_EXTENSION {
-                jack_files.push(path.to_path_buf());
-            } else {
-                return Err(anyhow!("un supported file: {:?}", path));
-            }
+    } else if let Some(extension) = path.extension() {
+        if extension == JACK_FILE_EXTENSION {
+            jack_files.push(path.to_path_buf());
+        } else {
+            return Err(anyhow!("un supported file: {:?}", path));
         }
     }
     Ok(jack_files)
@@ -65,12 +63,12 @@ fn jack_compiler(path_str: &str) -> Result<()> {
         .try_for_each(|jack_file| -> Result<()> {
             let xml_output_file_path = jack_file.parent().unwrap().join(format!(
                 "{}.{}",
-                jack_file.file_stem().unwrap().to_string_lossy().to_string(),
+                jack_file.file_stem().unwrap().to_string_lossy(),
                 OUTPUT_FILE_EXTENSION
             ));
             let vm_output_file_path = jack_file.parent().unwrap().join(format!(
                 "{}.{}",
-                jack_file.file_stem().unwrap().to_string_lossy().to_string(),
+                jack_file.file_stem().unwrap().to_string_lossy(),
                 "vm"
             ));
             let xml_output_file = Arc::new(Mutex::new(File::create(&xml_output_file_path)?));
@@ -123,7 +121,7 @@ mod tests {
     }
 
     fn create_test_file(test_dir: Option<&str>, test_file_extension: &str) -> Result<String> {
-        let test_dir = test_dir.or(Some("target/test/data")).unwrap();
+        let test_dir = test_dir.unwrap_or("target/test/data");
         fs::create_dir_all(test_dir)?;
         let mut test_file_name = Alphanumeric.sample_string(&mut rand::rng(), 5);
         test_file_name = format!("{}.{}", test_file_name, test_file_extension);
@@ -159,10 +157,8 @@ mod tests {
 
     #[test]
     fn test_parse_analyze_target_path_when_dirctory() -> Result<()> {
-        let test_files = vec![
-            create_test_file(Some(TEST_DIR), JACK_FILE_EXTENSION)?,
-            create_test_file(Some(TEST_DIR), JACK_FILE_EXTENSION)?,
-        ];
+        let test_files = [create_test_file(Some(TEST_DIR), JACK_FILE_EXTENSION)?,
+            create_test_file(Some(TEST_DIR), JACK_FILE_EXTENSION)?];
         let mut expect: Vec<PathBuf> = test_files
             .iter()
             .map(|f| Path::new(f).to_path_buf())
@@ -173,7 +169,7 @@ mod tests {
 
         test_files
             .iter()
-            .try_for_each(|test_file| fs::remove_file(test_file))?;
+            .try_for_each(fs::remove_file)?;
         Ok(())
     }
 
@@ -185,7 +181,7 @@ mod tests {
 
         jack_file_paths
             .iter()
-            .try_for_each(|jack_file_path| jack_compiler(&jack_file_path))?;
+            .try_for_each(|jack_file_path| jack_compiler(jack_file_path))?;
 
         Err(anyhow!("debugging"))
     }
